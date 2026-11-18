@@ -1,0 +1,7 @@
+{
+    "name": "betternmm-browser",
+    "productName": "BetterNMM",
+    "version": "1.0.0",
+    "private": true,
+    "main": "main.js"
+}

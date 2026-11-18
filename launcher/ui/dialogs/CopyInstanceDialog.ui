@@ -1,0 +1,233 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>CopyInstanceDialog</class>
+ <widget class="QDialog" name="CopyInstanceDialog">
+  <property name="windowModality">
+   <enum>Qt::ApplicationModal</enum>
+  </property>
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>520</width>
+    <height>460</height>
+   </rect>
+  </property>
+  <property name="windowTitle">
+   <string>Copy Instance</string>
+  </property>
+  <property name="windowIcon">
+   <iconset>
+    <normaloff>:/icons/toolbar/copy</normaloff>:/icons/toolbar/copy</iconset>
+  </property>
+  <property name="modal">
+   <bool>true</bool>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <layout class="QHBoxLayout" name="iconBtnLayout">
+     <item>
+      <spacer name="iconBtnLeftSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+     <item>
+      <widget class="QToolButton" name="iconButton">
+       <property name="iconSize">
+        <size>
+         <width>80</width>
+         <height>80</height>
+        </size>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <spacer name="iconBtnRightSpacer">
+       <property name="orientation">
+        <enum>Qt::Horizontal</enum>
+       </property>
+       <property name="sizeHint" stdset="0">
+        <size>
+         <width>40</width>
+         <height>20</height>
+        </size>
+       </property>
+      </spacer>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QLineEdit" name="instNameTextBox">
+     <property name="placeholderText">
+      <string>Name</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="Line" name="line">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <layout class="QGridLayout" name="groupDropdownLayout">
+     <item row="0" column="0">
+      <widget class="QLabel" name="groupLabel">
+       <property name="text">
+        <string>&amp;Group</string>
+       </property>
+       <property name="buddy">
+        <cstring>groupBox</cstring>
+       </property>
+      </widget>
+     </item>
+     <item row="0" column="1">
+      <widget class="QComboBox" name="groupBox">
+       <property name="sizePolicy">
+        <sizepolicy hsizetype="Expanding" vsizetype="Fixed">
+         <horstretch>0</horstretch>
+         <verstretch>0</verstretch>
+        </sizepolicy>
+       </property>
+       <property name="editable">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="copyOptionsGroup">
+     <property name="title">
+      <string>Instance Copy Options</string>
+     </property>
+     <layout class="QGridLayout" name="copyOptionsLayout">
+      <item row="0" column="0">
+       <widget class="QCheckBox" name="keepPlaytimeCheckbox">
+        <property name="text">
+         <string>Keep play time</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QCheckBox" name="copySavesCheckbox">
+        <property name="toolTip">
+         <string>Copy the saves of the instance into the new one. Copying from the Steam instance only reads your saves, it never changes them.</string>
+        </property>
+        <property name="text">
+         <string>Copy saves</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="0">
+       <widget class="QCheckBox" name="copySettingsCheckbox">
+        <property name="toolTip">
+         <string>Copy the game's INI files and everything else the instance keeps in its Documents and AppData folders.</string>
+        </property>
+        <property name="text">
+         <string>Copy game settings</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QCheckBox" name="copyModsCheckbox">
+        <property name="toolTip">
+         <string>Copy the installed mods, their order and the plugin load order.</string>
+        </property>
+        <property name="text">
+         <string>Copy mods</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="linkFilesGroup">
+     <property name="title">
+      <string>Disk Space</string>
+     </property>
+     <layout class="QVBoxLayout" name="linkOptionsLayout">
+      <item>
+       <widget class="QLabel" name="linkOptionsLabel">
+        <property name="text">
+         <string>The game files of the new instance are hard links to the Steam installation, so they take no extra space.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QCheckBox" name="linkModFilesCheckbox">
+        <property name="toolTip">
+         <string>Both instances share the same mod files. Saves space, but a mod file changed in one instance changes in the other too.</string>
+        </property>
+        <property name="text">
+         <string>Hard link mod files instead of copying them</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <spacer name="verticalSpacer">
+     <property name="orientation">
+      <enum>Qt::Vertical</enum>
+     </property>
+     <property name="sizeHint" stdset="0">
+      <size>
+       <width>20</width>
+       <height>10</height>
+      </size>
+     </property>
+    </spacer>
+   </item>
+   <item>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="orientation">
+      <enum>Qt::Horizontal</enum>
+     </property>
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Help|QDialogButtonBox::Ok</set>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <tabstops>
+  <tabstop>iconButton</tabstop>
+  <tabstop>instNameTextBox</tabstop>
+  <tabstop>groupBox</tabstop>
+  <tabstop>keepPlaytimeCheckbox</tabstop>
+  <tabstop>copySavesCheckbox</tabstop>
+  <tabstop>copySettingsCheckbox</tabstop>
+  <tabstop>copyModsCheckbox</tabstop>
+  <tabstop>linkModFilesCheckbox</tabstop>
+ </tabstops>
+ <resources/>
+ <connections>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>accepted()</signal>
+   <receiver>CopyInstanceDialog</receiver>
+   <slot>accept()</slot>
+  </connection>
+  <connection>
+   <sender>buttonBox</sender>
+   <signal>rejected()</signal>
+   <receiver>CopyInstanceDialog</receiver>
+   <slot>reject()</slot>
+  </connection>
+ </connections>
+</ui>

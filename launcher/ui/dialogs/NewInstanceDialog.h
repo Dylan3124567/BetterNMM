@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: GPL-3.0-only
+/*
+ *  BetterNMM - Nexus Mods mod manager (fork of Prism Launcher)
+ *  Copyright (C) 2022 Sefa Eyeoglu <contact@scrumplex.net>
+ *
+ *  This program is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, version 3.
+ *
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * This file incorporates work covered by the following copyright and
+ * permission notice:
+ *
+ *      Copyright 2013-2021 MultiMC Contributors
+ *
+ *      Licensed under the Apache License, Version 2.0 (the "License");
+ *      you may not use this file except in compliance with the License.
+ *      You may obtain a copy of the License at
+ *
+ *          http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *      Unless required by applicable law or agreed to in writing, software
+ *      distributed under the License is distributed on an "AS IS" BASIS,
+ *      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *      See the License for the specific language governing permissions and
+ *      limitations under the License.
+ */
+
+#pragma once
+
+#include <QDialog>
+
+#include "InstanceTask.h"
+#include "ui/pages/BasePageProvider.h"
+
+namespace Ui {
+class NewInstanceDialog;
+}
+
+class PageContainer;
+class QCheckBox;
+class QDialogButtonBox;
+class GamePage;
+class ImportPage;
+
+class NewInstanceDialog : public QDialog, public BasePageProvider {
+    Q_OBJECT
+
+   public:
+    explicit NewInstanceDialog(const QString& initialGroup, const QString& importArchive = QString(), QWidget* parent = nullptr);
+    ~NewInstanceDialog() override;
+
+    void updateDialogState();
+
+    void setSuggestedPack(const QString& name = QString(), InstanceTask* task = nullptr);
+    void setSuggestedIconFromFile(const QString& path, const QString& name);
+    void setSuggestedIcon(const QString& key);
+    /// Selects (and registers, if needed) the folder the instance is created in
+    void setTargetDir(const QString& dir);
+
+    InstanceTask* extractTask();
+    /// The Game page made the instance and the script extender should be installed into it afterwards
+    bool installScriptExtender() const;
+
+    QString dialogTitle() override;
+    QList<BasePage*> getPages() override;
+
+    QString instName() const;
+    QString instGroup() const;
+    QString iconKey() const;
+    QString instDir() const;
+    void refreshInstDirBox();
+
+   public slots:
+    void accept() override;
+    void reject() override;
+
+   private slots:
+    void on_iconButton_clicked();
+    void on_instNameTextBox_textChanged(const QString& arg1);
+
+   private:
+    void importIconNow();
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+   private:
+    Ui::NewInstanceDialog* ui = nullptr;
+    PageContainer* m_container = nullptr;
+    QDialogButtonBox* m_buttons = nullptr;
+
+    QString m_instIconKey;
+    GamePage* m_gamePage = nullptr;
+    ImportPage* m_importPage = nullptr;
+    std::unique_ptr<InstanceTask> m_creationTask;
+
+    bool m_importIcon = false;
+    QString m_importIconPath;
+    QString m_importIconName;
+
+    QString m_importVersion;
+
+    QString m_suggestedName;
+    bool m_nameFieldSelectedOnce = false;
+    bool m_nameFieldEditedByUser = false;
+
+};

@@ -1,0 +1,28 @@
+#include <windows.h>
+
+1 ICON "@SETUP_ICON@"
+101 RCDATA "@SETUP_LOGO@"
+1 24 "@SETUP_MANIFEST@"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     @Launcher_VERSION_NAME4_COMMA@
+PRODUCTVERSION  @Launcher_VERSION_NAME4_COMMA@
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "000004b0"
+        BEGIN
+            VALUE "CompanyName", "BetterNMM Contributors"
+            VALUE "FileDescription", "BetterNMM Setup"
+            VALUE "FileVersion", "@Launcher_VERSION_NAME4@"
+            VALUE "ProductName", "BetterNMM"
+            VALUE "ProductVersion", "@Launcher_VERSION_NAME4@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0000, 0x04b0
+    END
+END

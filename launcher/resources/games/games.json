@@ -1,0 +1,168 @@
+{
+    "formatVersion": 1,
+    "games": [
+        {
+            "domain": "skyrimspecialedition",
+            "name": "Skyrim Special Edition",
+            "steamAppIds": [489830],
+            "executable": "SkyrimSE.exe",
+            "scriptExtender": "skse64_loader.exe",
+            "scriptExtenderMod": 30379,
+            "crashLogger": { "name": "Crash Logger SSE AE VR", "mod": 59818 },
+            "myGames": "Skyrim Special Edition",
+            "appData": "Skyrim Special Edition",
+            "iniFiles": ["Skyrim.ini", "SkyrimPrefs.ini", "SkyrimCustom.ini"],
+            "dataPath": "Data",
+            "pluginFormat": "asterisk",
+            "pluginSlots": { "full": 254, "light": 4096 },
+            "implicitPlugins": ["Skyrim.esm", "Update.esm", "Dawnguard.esm", "HearthFires.esm", "Dragonborn.esm"],
+            "cccFile": "Skyrim.ccc"
+        },
+        {
+            "domain": "skyrim",
+            "name": "Skyrim",
+            "steamAppIds": [72850],
+            "executable": "TESV.exe",
+            "scriptExtender": "skse_loader.exe",
+            "scriptExtenderMod": 100216,
+            "myGames": "Skyrim",
+            "appData": "Skyrim",
+            "iniFiles": ["Skyrim.ini", "SkyrimPrefs.ini"],
+            "dataPath": "Data",
+            "pluginFormat": "textfile",
+            "pluginSlots": { "full": 255 },
+            "implicitPlugins": ["Skyrim.esm", "Update.esm"]
+        },
+        {
+            "domain": "fallout4",
+            "name": "Fallout 4",
+            "steamAppIds": [377160],
+            "executable": "Fallout4.exe",
+            "scriptExtender": "f4se_loader.exe",
+            "scriptExtenderMod": 42147,
+            "crashLogger": { "name": "Buffout 4 NG", "mod": 64880 },
+            "myGames": "Fallout4",
+            "appData": "Fallout4",
+            "iniFiles": ["Fallout4.ini", "Fallout4Prefs.ini", "Fallout4Custom.ini"],
+            "dataPath": "Data",
+            "pluginFormat": "asterisk",
+            "pluginSlots": { "full": 254, "light": 4096 },
+            "implicitPlugins": ["Fallout4.esm", "DLCRobot.esm", "DLCworkshop01.esm", "DLCCoast.esm", "DLCworkshop02.esm", "DLCworkshop03.esm", "DLCNukaWorld.esm", "DLCUltraHighResolution.esm"],
+            "cccFile": "Fallout4.ccc"
+        },
+        {
+            "domain": "newvegas",
+            "name": "Fallout: New Vegas",
+            "steamAppIds": [22380, 22490],
+            "executable": "FalloutNV.exe",
+            "scriptExtender": "nvse_loader.exe",
+            "scriptExtenderMod": 67883,
+            "crashLogger": { "name": "Yvile's Crash Logger", "mod": 82540 },
+            "myGames": "FalloutNV",
+            "appData": "FalloutNV",
+            "iniFiles": ["Fallout.ini", "FalloutPrefs.ini", "FalloutCustom.ini"],
+            "dataPath": "Data",
+            "pluginFormat": "timestamp",
+            "pluginSlots": { "full": 255 },
+            "implicitPlugins": ["FalloutNV.esm"]
+        },
+        {
+            "domain": "fallout3",
+            "name": "Fallout 3",
+            "steamAppIds": [22300, 22370],
+            "executable": "Fallout3.exe",
+            "scriptExtender": "fose_loader.exe",
+            "scriptExtenderMod": 8606,
+            "myGames": "Fallout3",
+            "appData": "Fallout3",
+            "iniFiles": ["Fallout.ini", "FalloutPrefs.ini"],
+            "dataPath": "Data",
+            "pluginFormat": "timestamp",
+            "pluginSlots": { "full": 255 },
+            "implicitPlugins": ["Fallout3.esm"]
+        },
+        {
+            "domain": "oblivion",
+            "name": "Oblivion",
+            "steamAppIds": [22330],
+            "executable": "Oblivion.exe",
+            "scriptExtender": "obse_loader.exe",
+            "scriptExtenderMod": 37952,
+            "crashLogger": { "name": "Crash Logger", "mod": 48503 },
+            "myGames": "Oblivion",
+            "appData": "Oblivion",
+            "iniFiles": ["Oblivion.ini"],
+            "dataPath": "Data",
+            "pluginFormat": "timestamp",
+            "pluginSlots": { "full": 255 },
+            "implicitPlugins": ["Oblivion.esm"]
+        },
+        {
+            "domain": "morrowind",
+            "name": "Morrowind",
+            "steamAppIds": [22320],
+            "executable": "Morrowind.exe",
+            "dataPath": "Data Files",
+            "saves": ["{game}/Saves"]
+        },
+        {
+            "domain": "starfield",
+            "name": "Starfield",
+            "steamAppIds": [1716740],
+            "executable": "Starfield.exe",
+            "scriptExtender": "sfse_loader.exe",
+            "scriptExtenderMod": 106,
+            "crashLogger": { "name": "Trainwreck", "mod": 5068 },
+            "myGames": "Starfield",
+            "appData": "Starfield",
+            "iniFiles": ["StarfieldCustom.ini", "StarfieldPrefs.ini"],
+            "dataPath": "Data",
+            "pluginFormat": "asterisk",
+            "implicitPlugins": ["Starfield.esm", "Constellation.esm", "OldMars.esm", "ShatteredSpace.esm", "SFBGS003.esm", "SFBGS004.esm", "SFBGS006.esm", "SFBGS007.esm", "SFBGS008.esm", "SFBGS00D.esm", "SFBGS047.esm", "SFBGS050.esm", "BlueprintShips-Starfield.esm"],
+            "cccFile": "Starfield.ccc"
+        },
+        {
+            "domain": "cyberpunk2077",
+            "name": "Cyberpunk 2077",
+            "steamAppIds": [1091500],
+            "executable": "bin/x64/Cyberpunk2077.exe",
+            "saves": ["{savedgames}/CD Projekt Red/Cyberpunk 2077"]
+        },
+        {
+            "domain": "witcher3",
+            "name": "The Witcher 3",
+            "steamAppIds": [292030],
+            "executable": "bin/x64/witcher3.exe",
+            "saves": ["{documents}/The Witcher 3/gamesaves"]
+        },
+        {
+            "domain": "stardewvalley",
+            "name": "Stardew Valley",
+            "steamAppIds": [413150],
+            "executable": "Stardew Valley.exe",
+            "scriptExtender": "StardewModdingAPI.exe",
+            "saves": ["{appdata}/StardewValley/Saves"]
+        },
+        {
+            "domain": "mountandblade2bannerlord",
+            "name": "Mount & Blade II: Bannerlord",
+            "steamAppIds": [261550],
+            "executable": "bin/Win64_Shipping_Client/Bannerlord.exe",
+            "saves": ["{documents}/Mount and Blade II Bannerlord/Game Saves"]
+        },
+        {
+            "domain": "darksouls3",
+            "name": "Dark Souls III",
+            "steamAppIds": [374320],
+            "executable": "Game/DarkSoulsIII.exe",
+            "saves": ["{appdata}/DarkSoulsIII"]
+        },
+        {
+            "domain": "eldenring",
+            "name": "Elden Ring",
+            "steamAppIds": [1245620],
+            "executable": "Game/eldenring.exe",
+            "saves": ["{appdata}/EldenRing"]
+        }
+    ]
+}

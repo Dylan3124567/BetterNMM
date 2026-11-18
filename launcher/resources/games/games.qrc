@@ -1,0 +1,7 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/games">
+        <file>games.json</file>
+        <file>settings.json</file>
+    </qresource>
+</RCC>
