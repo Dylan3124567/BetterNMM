@@ -24,6 +24,7 @@ set(TEST_SOURCES
     FomodPatches_test.cpp
     DownloadManager_test.cpp
     Nemesis_test.cpp
+    HealthCheck_test.cpp
 )
 
 # NOTE(@getchoo): Very funny way of aliasing the Qt generated `main` test functions to respective filenames

@@ -89,6 +89,8 @@ set(LAUNCHER_SOURCES
     game/AutoSort.h
     game/CrashReport.cpp
     game/CrashReport.h
+    game/HealthCheck.cpp
+    game/HealthCheck.h
     game/Deployer.cpp
     game/Deployer.h
     game/Fomod.cpp
@@ -332,6 +334,8 @@ set(LAUNCHER_SOURCES
     ui/pages/instance/OtherLogsPage.ui
     ui/pages/instance/PluginsPage.cpp
     ui/pages/instance/PluginsPage.h
+    ui/pages/instance/HealthPage.cpp
+    ui/pages/instance/HealthPage.h
     ui/pages/instance/SavesPage.cpp
     ui/pages/instance/SavesPage.h
     # ui/pages/newinstance

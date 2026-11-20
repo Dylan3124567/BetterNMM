@@ -47,6 +47,9 @@ class NexusBrowseDialog : public QDialog {
     explicit NexusBrowseDialog(GameInstance* instance, QWidget* parent = nullptr);
     ~NexusBrowseDialog() override;
 
+    /// Searches for @p text as if it was typed into the search box
+    void searchFor(const QString& text);
+
    private:
     struct Selection {
         Nexus::ModInfo mod;

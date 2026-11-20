@@ -4,6 +4,7 @@
 #include "ui/pages/BasePageProvider.h"
 #include "ui/pages/instance/GameFilesPage.h"
 #include "ui/pages/instance/GameSettingsPage.h"
+#include "ui/pages/instance/HealthPage.h"
 #include "ui/pages/instance/LogPage.h"
 #include "ui/pages/instance/ModsPage.h"
 #include "ui/pages/instance/NotesPage.h"
@@ -23,6 +24,7 @@ class InstancePageProvider : protected QObject, public BasePageProvider {
         values.append(new LogPage(inst));
         values.append(new ModsPage(inst));
         values.append(new PluginsPage(inst));
+        values.append(new HealthPage(inst));
         values.append(new SavesPage(inst));
         values.append(new GameFilesPage(inst));
         values.append(new NotesPage(inst));

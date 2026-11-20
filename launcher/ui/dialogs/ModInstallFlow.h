@@ -91,6 +91,10 @@ bool installNexusFile(GameInstance* instance, const NxmLink& link, QWidget* pare
 /// The same without a website link; Nexus allows this for Premium members only
 bool installNexusFile(GameInstance* instance, const QString& game, int modId, int fileId, QWidget* parent);
 
+/// Installs the newest main file of the mods @p modIds of @p game from Nexus Mods: in the background for Premium
+/// members, else through BetterNMM's Nexus Mods window. Problems are reported.
+void installNexusMods(GameInstance* instance, const QString& game, const QList<int>& modIds, QWidget* parent);
+
 /// Installs a finished download into the instance with the id @p instanceId, after the installs queued before it: one
 /// installer at a time, never inside another dialog
 void queueInstall(const QString& instanceId, const QString& archive, const ModEntry& metadata);

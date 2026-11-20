@@ -707,6 +707,43 @@ bool changeInstallerOptions(GameInstance* instance, const QString& modId, QWidge
     return installArchive(instance, archive, entry, parent);
 }
 
+void installNexusMods(GameInstance* instance, const QString& game, const QList<int>& modIds, QWidget* parent)
+{
+    const auto title = QObject::tr("Install mods");
+    const auto details = fetchModDetails(game, modIds, parent);
+    if (!details) {
+        showError(parent, title, details.error());
+        return;
+    }
+    if (details->isEmpty()) {
+        showError(parent, title, QObject::tr("Nexus Mods does not have these mods any more."));
+        return;
+    }
+    const auto files = fetchModFiles(details->first().gameId, modIds, parent);
+    if (!files) {
+        showError(parent, title, files.error());
+        return;
+    }
+    QStringList problems;
+    QList<NexusFile> fromWebsite;
+    for (const auto& mod : *details) {
+        const auto newest = Nexus::bestFile(files->value(mod.modId));
+        if (newest.fileId <= 0) {
+            problems << QObject::tr("%1: Nexus Mods has no files for it.").arg(mod.name);
+        } else if (APPLICATION->accounts()->isPremium()) {
+            installNexusFile(instance, game, mod.modId, newest.fileId, parent);
+        } else {
+            fromWebsite << NexusFile{ .modId = mod.modId, .modName = mod.name, .modVersion = mod.version, .file = newest };
+        }
+    }
+    if (!fromWebsite.isEmpty()) {
+        downloadFromWebsite(instance, game, fromWebsite, parent);
+    }
+    if (!problems.isEmpty()) {
+        showError(parent, title, problems.join("\n\n"));
+    }
+}
+
 void queueInstall(const QString& instanceId, const QString& archive, const ModEntry& metadata)
 {
     g_installs << PendingInstall{ instanceId, archive, metadata };

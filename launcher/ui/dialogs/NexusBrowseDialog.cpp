@@ -281,6 +281,11 @@ NexusBrowseDialog::~NexusBrowseDialog()
     APPLICATION->settings()->set("NexusBrowseGeometry", QString::fromUtf8(saveGeometry().toBase64()));
 }
 
+void NexusBrowseDialog::searchFor(const QString& text)
+{
+    m_query->setText(text);
+}
+
 int NexusBrowseDialog::currentRow() const
 {
     const int row = m_list->currentRow();
