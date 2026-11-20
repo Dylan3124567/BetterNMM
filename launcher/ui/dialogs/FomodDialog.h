@@ -38,6 +38,8 @@ class FomodDialog : public QDialog {
 
     /// Files to install, valid after the dialog was accepted
     QList<Fomod::FileItem> files() const;
+    /// The options picked, valid after the dialog was accepted
+    QList<Fomod::Selection> selections() const { return m_selections; }
 
    private:
     void showStep(int index);

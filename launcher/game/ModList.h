@@ -37,6 +37,7 @@ struct ModEntry {
     QString latestVersion;  ///< from the last update check
     QString archive;        ///< file name of the archive it was installed from
     qint64 stamp = 0;       ///< install time in ms since epoch; changes when the files change
+    QList<QStringList> choices;  ///< options picked in its FOMOD installer, as {step, group, option} names
 
     bool hasUpdate() const { return !latestVersion.isEmpty() && !version.isEmpty() && latestVersion != version; }
 };

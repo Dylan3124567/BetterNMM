@@ -191,6 +191,7 @@
     <addaction name="actionReportBug"/>
     <addaction name="actionViewLog"/>
     <addaction name="separator"/>
+    <addaction name="actionCheckUpdates"/>
     <addaction name="separator"/>
     <addaction name="actionAbout"/>
    </widget>
@@ -551,6 +552,14 @@
    </property>
    <property name="toolTip">
     <string>Open the bug tracker to report a bug with %1.</string>
+   </property>
+  </action>
+  <action name="actionCheckUpdates">
+   <property name="text">
+    <string>&amp;Check for Updates</string>
+   </property>
+   <property name="toolTip">
+    <string>Check whether a newer %1 is out on GitHub.</string>
    </property>
   </action>
   <action name="actionAbout">

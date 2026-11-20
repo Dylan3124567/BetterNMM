@@ -20,7 +20,8 @@
 // colours; installing for everyone runs the file work in an elevated copy of this program that reports back to it.
 //
 //   setup.exe [--silent] [--dir <folder>] [--scope user|machine] [--desktop 0|1] [--startmenu 0|1] [--pin 0|1]
-//             [--nxm 0|1] [--launch 0|1] [--test-root <folder>]
+//             [--nxm 0|1] [--launch 0|1] [--parent <process id>] [--test-root <folder>]
+//   (--parent: BetterNMM updating itself; a silent install waits for that process to end)
 //   uninstall.exe [--silent]
 
 #include <windows.h>
@@ -67,7 +68,7 @@ struct Args {
     std::wstring scope;
     std::wstring options;
     std::wstring testRoot;
-    DWORD parent = 0;  ///< the uninstaller that started this copy of it
+    DWORD parent = 0;  ///< the uninstaller that started this copy of it, or the BetterNMM that is updating itself
     HWND report = nullptr;
     std::map<std::wstring, bool> flags;
 };
@@ -1573,8 +1574,22 @@ int runSilent(const Args& args, bool uninstall)
     plan.scope = existing.found ? existing.scope : (args.scope == L"machine" ? Setup::Scope::Machine : Setup::Scope::User);
     plan.dir =
         existing.found && args.dir.empty() ? existing.dir : (args.dir.empty() ? Setup::defaultDir(plan.scope, plan.where) : args.dir);
+    if (args.parent) {
+        // BetterNMM updating itself quits right after starting this; its helper processes end with it
+        if (HANDLE process = OpenProcess(SYNCHRONIZE, FALSE, args.parent)) {
+            WaitForSingleObject(process, 60000);
+            CloseHandle(process);
+        }
+        for (int i = 0; i < 40 && !Setup::runningFrom(plan.dir).empty(); i++) {
+            Sleep(250);
+        }
+    }
     if (!Setup::runningFrom(plan.dir).empty()) {
         Setup::log(L"silent install: BetterNMM is running from " + plan.dir);
+        // BetterNMM updating itself comes back as it was rather than not at all, and offers the update again
+        if (args.parent && existing.found && plan.options.launch && args.flags.count(L"launch")) {
+            Setup::launch(plan);
+        }
         return 3;
     }
     std::wstring error;
@@ -1591,7 +1606,8 @@ int runSilent(const Args& args, bool uninstall)
     if (ok && !Setup::installForUser(plan, error)) {
         Setup::log(error);
     }
-    if (ok && plan.options.launch && args.flags.count(L"launch")) {
+    // a failed update still starts the copy that is there, which offers the update again
+    if ((ok || existing.found) && plan.options.launch && args.flags.count(L"launch")) {
         Setup::launch(plan);
     }
     return ok ? 0 : 1;

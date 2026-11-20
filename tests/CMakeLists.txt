@@ -21,6 +21,7 @@ set(TEST_SOURCES
     AutoSort_test.cpp
     NexusDownloadQueue_test.cpp
     VortexImport_test.cpp
+    FomodPatches_test.cpp
 )
 
 # NOTE(@getchoo): Very funny way of aliasing the Qt generated `main` test functions to respective filenames

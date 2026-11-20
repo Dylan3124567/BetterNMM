@@ -92,6 +92,8 @@ set(LAUNCHER_SOURCES
     game/Deployer.cpp
     game/Deployer.h
     game/Fomod.cpp
+    game/FomodPatches.cpp
+    game/FomodPatches.h
     game/Fomod.h
     game/GameDefinition.cpp
     game/GameDefinition.h
@@ -220,6 +222,8 @@ set(LAUNCHER_SOURCES
     ui/InstanceWindow.h
     ui/MainWindow.cpp
     ui/MainWindow.h
+    ui/SelfUpdate.cpp
+    ui/SelfUpdate.h
     ui/MainWindow.ui
     ui/MultiDecorationItemDelegate.cpp
     ui/MultiDecorationItemDelegate.h

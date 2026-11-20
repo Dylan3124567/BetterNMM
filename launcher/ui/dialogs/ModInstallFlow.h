@@ -97,4 +97,11 @@ bool purge(GameInstance* instance, QWidget* parent);
  */
 bool autoSort(GameInstance* instance, QWidget* parent);
 
+/**
+ * Finds compatibility patches in the FOMOD installers of the enabled mods (read from their archives in the downloads
+ * folder) that the installers recommend because of other mods you have, but that are not installed, and adds the ones
+ * picked to their mods.
+ */
+void checkPatches(GameInstance* instance, QWidget* parent);
+
 }  // namespace ModInstallFlow

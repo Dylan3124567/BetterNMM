@@ -95,6 +95,7 @@ Config::Config()
     NEXUS_API_URL = "@Launcher_NEXUS_API_URL@";
     NEXUS_GRAPHQL_URL = "@Launcher_NEXUS_GRAPHQL_URL@";
     NEXUS_SITE_URL = "@Launcher_NEXUS_SITE_URL@";
+    RELEASES_API_URL = "@Launcher_RELEASES_API_URL@";
 }
 
 QString Config::versionString() const

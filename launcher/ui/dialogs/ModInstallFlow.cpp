@@ -19,6 +19,12 @@
 #include "ModInstallFlow.h"
 
 #include <QDateTime>
+#include <QtConcurrent/QtConcurrentRun>
+#include <QVBoxLayout>
+#include <QListWidget>
+#include <QLabel>
+#include <QFutureWatcher>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDirListing>
 #include <QFileDialog>
@@ -47,6 +53,7 @@
 #include "game/AutoSort.h"
 #include "game/Deployer.h"
 #include "game/Fomod.h"
+#include "game/FomodPatches.h"
 #include "game/GameFiles.h"
 #include "game/GameInstance.h"
 #include "game/ModInstaller.h"
@@ -116,17 +123,21 @@ QSet<QString> pluginsIn(const QString& stagedMod)
     return out;
 }
 
-Fomod::FileState pluginState(GameInstance* instance, const QString& file)
+/// The state of plugin files in the game for FOMOD conditions, taken now so it can be asked on a worker thread
+FomodPatches::FileStates fileStates(GameInstance* instance)
 {
-    const auto name = QFileInfo(file).fileName();
+    QHash<QString, Fomod::FileState> plugins;
     if (instance->definition().hasPlugins()) {
         for (const auto& plugin : instance->pluginList()->plugins()) {
-            if (plugin.name.compare(name, Qt::CaseInsensitive) == 0) {
-                return plugin.active ? Fomod::FileState::Active : Fomod::FileState::Inactive;
-            }
+            plugins.insert(plugin.name.toLower(), plugin.active ? Fomod::FileState::Active : Fomod::FileState::Inactive);
         }
     }
-    return QFileInfo::exists(FS::PathCombine(instance->dataDir(), file)) ? Fomod::FileState::Active : Fomod::FileState::Missing;
+    return [plugins, dataDir = instance->dataDir()](const QString& file) {
+        if (const auto it = plugins.constFind(QFileInfo(file).fileName().toLower()); it != plugins.cend()) {
+            return *it;
+        }
+        return QFileInfo::exists(FS::PathCombine(dataDir, file)) ? Fomod::FileState::Active : Fomod::FileState::Missing;
+    };
 }
 
 /// Switches on @p names (lower-case plugin file names) the way they would be after installing a mod by hand
@@ -489,11 +500,13 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
             return false;
         }
         Fomod::Context context;
-        context.fileState = [instance](const QString& file) { return pluginState(instance, file); };
+        context.fileState = fileStates(instance);
         FomodDialog wizard(*module, analysis.fomodRoot, context, metadata.name, parent);
         if (wizard.exec() != QDialog::Accepted) {
             return false;
         }
+        // kept so Check Patches knows which options this copy has
+        metadata.choices = FomodPatches::choiceNames(*module, wizard.selections(), context);
         if (auto staged = ModInstaller::stageFomod(wizard.files(), analysis, game, staging); !staged) {
             showError(parent, QObject::tr("Installing %1 failed").arg(metadata.name), staged.error());
             return false;
@@ -901,6 +914,202 @@ bool autoSort(GameInstance* instance, QWidget* parent)
         mods->setOrder(modsBefore);
     }
     return true;
+}
+
+namespace {
+
+/// Runs work on a worker thread as a task, so a progress dialog shows while it runs
+template <typename T>
+class WorkerTask : public Task {
+   public:
+    WorkerTask(QString status, std::function<T()> work) : m_status(std::move(status)), m_work(std::move(work)) {}
+    const T& result() const { return m_result; }
+
+   protected:
+    void executeTask() override
+    {
+        setStatus(m_status);
+        connect(&m_watcher, &QFutureWatcher<T>::finished, this, [this] {
+            m_result = m_watcher.result();
+            emitSucceeded();
+        });
+        m_watcher.setFuture(QtConcurrent::run(m_work));
+    }
+
+   private:
+    QString m_status;
+    std::function<T()> m_work;
+    QFutureWatcher<T> m_watcher;
+    T m_result;
+};
+
+/// Where Check Patches keeps what it read from archives
+QString patchCache()
+{
+    return FS::PathCombine(APPLICATION->dataRoot(), "cache", "fomod");
+}
+
+FomodPatches::Mod patchMod(GameInstance* instance, const ModEntry& entry)
+{
+    const auto dir = instance->modList()->modDir(entry.id);
+    const auto dataPath = instance->definition().dataPath;
+    return FomodPatches::Mod{ .id = entry.id,
+                              .name = entry.name,
+                              .archive = entry.archive.isEmpty() ? QString() : FS::PathCombine(instance->downloadsDir(), entry.archive),
+                              .folder = dataPath.isEmpty() ? dir : FS::PathCombine(dir, dataPath),
+                              .choices = entry.choices };
+}
+
+void addPatches(GameInstance* instance, const QList<FomodPatches::Patch>& patches, QWidget* parent)
+{
+    const auto title = QObject::tr("Add patches");
+    if (refuseWhileRunning(instance, parent)) {
+        return;
+    }
+    auto* mods = instance->modList();
+    QStringList order;
+    QHash<QString, QList<FomodPatches::Patch>> byMod;
+    for (const auto& patch : patches) {
+        if (!byMod.contains(patch.modId)) {
+            order << patch.modId;
+        }
+        byMod[patch.modId] << patch;
+    }
+    const auto states = fileStates(instance);
+    QSet<QString> plugins;
+    QStringList errors;
+    int added = 0;
+    for (const auto& id : order) {
+        const int row = mods->indexOf(id);
+        if (row < 0) {
+            continue;
+        }
+        auto entry = mods->mods()[row];
+        const auto modPatches = byMod.value(id);
+        WorkerTask<Result<FomodPatches::Installed>> adding(
+            QObject::tr("Adding patches to %1").arg(entry.name),
+            [mod = patchMod(instance, entry), modPatches, states, cache = patchCache()] { return FomodPatches::install(mod, modPatches, states, cache); });
+        runTask(&adding, parent, title);
+        const auto& result = adding.result();
+        if (!result) {
+            errors << QObject::tr("%1: %2").arg(entry.name, result.error());
+            continue;
+        }
+        entry.choices = result->choices;
+        entry.stamp = QDateTime::currentMSecsSinceEpoch();  // the deployer links the changed files anew
+        mods->upsert(entry);
+        plugins.unite(QSet<QString>(result->plugins.begin(), result->plugins.end()));
+        added += static_cast<int>(modPatches.size());
+    }
+    if (added > 0) {
+        instance->saveNow();
+        if (deploy(instance, parent)) {
+            activatePlugins(instance, plugins, parent);
+        }
+    }
+    if (!errors.isEmpty()) {
+        showError(parent, title, QObject::tr("These patches were not added:\n\n%1").arg(errors.join("\n")));
+    } else if (added > 0) {
+        QMessageBox::information(parent, title,
+                                 QObject::tr("Added %n patch(es).", "", added) +
+                                     (plugins.isEmpty() ? QString()
+                                                        : " " + QObject::tr("Their plugins are on; Auto Sort puts them in their place in the load order.")));
+    }
+}
+
+}  // namespace
+
+void checkPatches(GameInstance* instance, QWidget* parent)
+{
+    const auto title = QObject::tr("Check patches");
+    if (instance->definition().hasPlugins()) {
+        if (auto refreshed = instance->pluginList()->refresh(); !refreshed) {
+            showError(parent, title, refreshed.error());
+            return;
+        }
+    }
+    QList<FomodPatches::Mod> mods;
+    for (const auto& entry : instance->modList()->mods()) {
+        if (entry.enabled) {
+            mods << patchMod(instance, entry);
+        }
+    }
+    WorkerTask<FomodPatches::Check> reading(QObject::tr("Reading the installers of %n mod(s)", "", static_cast<int>(mods.size())),
+                                            [mods, states = fileStates(instance), cache = patchCache()] { return FomodPatches::find(mods, states, cache); });
+    if (!runTask(&reading, parent, title)) {
+        return;
+    }
+    const auto check = reading.result();
+
+    QStringList notes;
+    if (!check.unchecked.isEmpty()) {
+        notes << QObject::tr("Not checked, because their archive is not in the downloads folder: %1").arg(check.unchecked.join(", "));
+    }
+    if (!check.errors.isEmpty()) {
+        notes << QObject::tr("Could not be read:\n%1").arg(check.errors.join("\n"));
+    }
+    if (check.patches.isEmpty()) {
+        CustomMessageBox::selectable(
+            parent, title,
+            (QStringList{ QObject::tr("No missing patches: the installers of your mods recommend nothing more for the mods you have.") } + notes)
+                .join("\n\n"),
+            QMessageBox::Information)
+            ->exec();
+        return;
+    }
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* intro = new QLabel(QObject::tr("The installers of these mods recommend these options because of other mods you have, and they are "
+                                         "not installed. The checked ones are added to their mods:"));
+    intro->setWordWrap(true);
+    layout->addWidget(intro);
+    auto* list = new QListWidget;
+    for (int i = 0; i < check.patches.size(); i++) {
+        const auto& patch = check.patches[i];
+        auto text = QObject::tr("%1: %2").arg(patch.modName, patch.title.isEmpty() ? QObject::tr("files it adds for mods you have") : patch.title);
+        if (!patch.files.isEmpty()) {
+            text += QString(" (%1)").arg(patch.files.join(", "));
+        }
+        if (!patch.replaces.isEmpty()) {
+            text += " " + QObject::tr("instead of %1").arg(patch.replaces.join(", "));
+        }
+        auto* item = new QListWidgetItem(text, list);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+        item->setData(Qt::UserRole, i);
+    }
+    layout->addWidget(list);
+    if (!notes.isEmpty()) {
+        auto* label = new QLabel(notes.join("\n\n"));
+        label->setWordWrap(true);
+        label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(label);
+    }
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
+    auto* add = buttons->addButton(QObject::tr("&Add Checked"), QDialogButtonBox::AcceptRole);
+    QObject::connect(list, &QListWidget::itemChanged, add, [list, add] {
+        bool any = false;
+        for (int i = 0; i < list->count(); i++) {
+            any = any || list->item(i)->checkState() == Qt::Checked;
+        }
+        add->setEnabled(any);
+    });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    dialog.resize(720, 420);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    QList<FomodPatches::Patch> chosen;
+    for (int i = 0; i < list->count(); i++) {
+        if (list->item(i)->checkState() == Qt::Checked) {
+            chosen << check.patches[list->item(i)->data(Qt::UserRole).toInt()];
+        }
+    }
+    addPatches(instance, chosen, parent);
 }
 
 }  // namespace ModInstallFlow

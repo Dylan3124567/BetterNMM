@@ -68,6 +68,7 @@
 #include <QShortcut>
 #include <QStatusBar>
 #include <QTextEdit>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QWidget>
@@ -115,6 +116,7 @@
 #include "Json.h"
 
 #include "MMCTime.h"
+#include "SelfUpdate.h"
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWindow)
 {
@@ -345,6 +347,9 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent), ui(new Ui::MainWi
     view->setFocus();
 
     retranslateUi();
+
+    // once the window is up, so a slow or offline network never delays it
+    QTimer::singleShot(0, this, [this] { SelfUpdate::check(this, true); });
 }
 
 // macOS always has a native menu bar, so these fixes are not applicable
@@ -1104,6 +1109,11 @@ void MainWindow::on_actionAbout_triggered()
 {
     AboutDialog dialog(this);
     dialog.exec();
+}
+
+void MainWindow::on_actionCheckUpdates_triggered()
+{
+    SelfUpdate::check(this, false);
 }
 
 void MainWindow::on_actionDeleteInstance_triggered()

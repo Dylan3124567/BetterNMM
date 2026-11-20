@@ -81,6 +81,9 @@ Result<> ModList::load()
             entry.latestVersion = obj.value("latestVersion").toString();
             entry.archive = obj.value("archive").toString();
             entry.stamp = obj.value("stamp").toInteger();
+            for (const auto& choice : obj.value("choices").toArray()) {
+                entry.choices << choice.toVariant().toStringList();
+            }
             m_mods << entry;
         }
     }
@@ -113,6 +116,13 @@ Result<> ModList::save() const
         }
         if (!entry.archive.isEmpty()) {
             obj.insert("archive", entry.archive);
+        }
+        if (!entry.choices.isEmpty()) {
+            QJsonArray choices;
+            for (const auto& choice : entry.choices) {
+                choices.append(QJsonArray::fromStringList(choice));
+            }
+            obj.insert("choices", choices);
         }
         if (entry.nexusModId > 0) {
             obj.insert("nexus", QJsonObject{ { "game", entry.nexusGame }, { "modId", entry.nexusModId }, { "fileId", entry.nexusFileId } });

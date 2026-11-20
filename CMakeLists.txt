@@ -176,6 +176,7 @@ set(Launcher_BUG_TRACKER_URL "" CACHE STRING "URL for the bug tracker.")
 set(Launcher_NEXUS_API_URL "https://api.nexusmods.com/v1/" CACHE STRING "Nexus Mods REST API base URL")
 set(Launcher_NEXUS_GRAPHQL_URL "https://api.nexusmods.com/v2/graphql" CACHE STRING "Nexus Mods GraphQL API URL")
 set(Launcher_NEXUS_SITE_URL "https://www.nexusmods.com/" CACHE STRING "Nexus Mods website")
+set(Launcher_RELEASES_API_URL "https://api.github.com/repos/Dylan3124567/BetterNMM/releases/latest" CACHE STRING "GitHub API URL of the newest release, for updating; empty turns updating off")
 
 ######## Set version numbers ########
 set(Launcher_VERSION_MAJOR 1)

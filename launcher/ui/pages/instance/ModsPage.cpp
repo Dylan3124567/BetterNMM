@@ -81,6 +81,9 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
                                tr("Sort the plugins with LOOT's rules and masterlist, and order mods that have the same files: a mod "
                                   "wins over the mods it needs, then the mod whose plugin loads later wins."),
                                "refresh");
+    auto* patches = addAction(tr("Check &Patches"), tr("Find compatibility patches in your mods' installers that the other mods you have "
+                                                       "call for, and add them."));
+    connect(patches, &QAction::triggered, this, [this] { ModInstallFlow::checkPatches(m_instance, this); });
     addSeparator();
     auto* check = addAction(tr("Check for &Updates"), tr("Ask Nexus Mods for the newest version of every mod installed from it."), "refresh");
     m_update = addAction(tr("U&pdate"), tr("Install the newest file of the selected mods."));

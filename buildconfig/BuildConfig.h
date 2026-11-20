@@ -110,6 +110,8 @@ class Config {
     QString NEXUS_GRAPHQL_URL;
     /// Nexus Mods website, ends with a slash
     QString NEXUS_SITE_URL;
+    /// GitHub API URL of the newest release, for updating; empty when this build does not update itself
+    QString RELEASES_API_URL;
     /// Where a user creates a personal API key
     QString NEXUS_API_KEY_PAGE = "https://www.nexusmods.com/settings/api-keys";
 

@@ -272,6 +272,11 @@ Result<> ArchiveReader::parse(const std::function<Result<>(File*)>& doStuff)
     });
 }
 
+qint64 ArchiveReader::File::size()
+{
+    return archive_entry_size_is_set(m_entry) ? archive_entry_size(m_entry) : -1;
+}
+
 bool ArchiveReader::File::isFile()
 {
     return (archive_entry_filetype(m_entry) & AE_IFMT) == AE_IFREG;
