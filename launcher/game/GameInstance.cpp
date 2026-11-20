@@ -36,6 +36,7 @@
 #include "game/ModList.h"
 #include "game/PluginList.h"
 #include "launch/LaunchTask.h"
+#include "launch/steps/CaptureToolOutput.h"
 #include "launch/steps/LaunchCommand.h"
 #include "launch/steps/LaunchGameProcess.h"
 #include "launch/steps/PrepareGame.h"
@@ -587,7 +588,8 @@ QList<GameExecutable> GameInstance::customExecutables() const
         GameExecutable exe{ .name = obj.value("name").toString(),
                             .path = obj.value("path").toString(),
                             .arguments = obj.value("arguments").toString(),
-                            .workingDir = obj.value("workingDir").toString() };
+                            .workingDir = obj.value("workingDir").toString(),
+                            .outputMod = obj.value("outputMod").toString() };
         if (!exe.name.isEmpty() && !exe.path.isEmpty()) {
             out << exe;
         }
@@ -599,7 +601,11 @@ void GameInstance::setCustomExecutables(const QList<GameExecutable>& list)
 {
     QJsonArray array;
     for (const auto& exe : list) {
-        array.append(QJsonObject{ { "name", exe.name }, { "path", exe.path }, { "arguments", exe.arguments }, { "workingDir", exe.workingDir } });
+        QJsonObject obj{ { "name", exe.name }, { "path", exe.path }, { "arguments", exe.arguments }, { "workingDir", exe.workingDir } };
+        if (!exe.outputMod.isEmpty()) {
+            obj.insert("outputMod", exe.outputMod);
+        }
+        array.append(obj);
     }
     m_settings->set("CustomExecutables", QString::fromUtf8(QJsonDocument(array).toJson(QJsonDocument::Compact)));
 }
@@ -655,7 +661,26 @@ LaunchTask* GameInstance::createLaunchTask(const QString& executableName)
         process->appendStep(step);
     }
 
+    // what a tool writes into the game folder goes into its output mod, even when it fails or is stopped
+    std::shared_ptr<ToolRun> toolRun;
+    if (!exe.builtIn && !exe.outputMod.trimmed().isEmpty()) {
+        toolRun = std::make_shared<ToolRun>();
+        toolRun->tool = exe.name;
+        toolRun->outputMod = exe.outputMod.trimmed();
+        toolRun->filter.excludePatterns = GameFiles::splitPatterns(m_settings->get("ExcludeFilePatterns").toString());
+        // a tool kept in the game folder keeps its own state (caches, logs) next to it; the game folder and the data
+        // folder themselves are where its output goes
+        const auto own = QDir(gameRoot()).relativeFilePath(QFileInfo(absoluteExecutablePath(exe)).absolutePath());
+        const auto dataPath = definition().dataPath;
+        if (!own.startsWith("..") && !QDir::isAbsolutePath(own) && own != "." && QDir::cleanPath(own).compare(dataPath, Qt::CaseInsensitive) != 0) {
+            toolRun->filter.ownDirs << own;
+        }
+        process->appendStep(makeShared<SnapshotGameFolder>(pptr, toolRun));
+    }
     process->appendStep(makeShared<LaunchGameProcess>(pptr, exe));
+    if (toolRun) {
+        process->appendStep(makeShared<CaptureToolOutput>(pptr, toolRun));
+    }
 
     if (!getPostExitCommand().isEmpty()) {
         auto step = makeShared<LaunchCommand>(pptr, getPostExitCommand(), tr("Post-Exit"));

@@ -27,6 +27,10 @@ class LaunchStep : public Task {
     explicit LaunchStep(LaunchTask* parent);
     virtual ~LaunchStep() = default;
 
+    /// Whether the step still runs when an earlier one failed or was stopped: work the launch owes the instance either
+    /// way. The launch still ends with the first failure.
+    virtual bool runsAfterFailure() const { return false; }
+
    signals:
     void logLines(QStringList lines, MessageLevel level);
     void logLine(QString line, MessageLevel level);

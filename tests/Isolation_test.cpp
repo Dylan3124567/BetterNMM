@@ -25,6 +25,7 @@
 #include <QTest>
 
 #include <FileSystem.h>
+#include <game/Deployer.h>
 #include <game/GameFiles.h>
 #include <game/GameInstance.h>
 #include <game/ModList.h>
@@ -64,6 +65,12 @@ void writeFile(const QString& path, const QByteArray& content = "x")
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate));
     file.write(content);
+}
+
+QByteArray readFile(const QString& path)
+{
+    QFile file(path);
+    return file.open(QIODevice::ReadOnly) ? file.readAll() : QByteArray();
 }
 
 QMap<QString, QString> readReport(const QString& path)
@@ -306,6 +313,112 @@ class IsolationTest : public QObject {
         QCOMPARE(failed.count(), 0);
         QVERIFY(!instance.hasCrashed());
         QVERIFY(!instance.isRunning());
+    }
+
+    void test_tool_output_goes_into_its_mod()
+    {
+        QTemporaryDir dir;
+        auto global = globalSettings(dir.path());
+        const auto steam = FS::PathCombine(dir.path(), "steam");
+        QVERIFY(FS::ensureFolderPathExists(FS::PathCombine(steam, "Data/Writer")));
+        QVERIFY(QFile::copy(KNOWN_FOLDERS_EXE, FS::PathCombine(steam, "Game.exe")));
+        QVERIFY(FS::ensureFolderPathExists(FS::PathCombine(steam, "Tools/Writer")));
+        QVERIFY(QFile::copy(KNOWN_FOLDERS_EXE, FS::PathCombine(steam, "Tools/Writer/writer.exe")));
+        writeFile(FS::PathCombine(steam, "Data/Base.esm"), "TES4");
+
+        const auto root = FS::PathCombine(dir.path(), "instances", "tools");
+        auto settings = std::make_unique<INISettingsObject>(FS::PathCombine(root, "instance.cfg"));
+        settings->registerSetting("InstanceType", "Game");
+        GameInstance instance(global.get(), std::move(settings), root);
+        GameDefinition game;
+        game.domain = "testgame";
+        game.name = "Test Game";
+        game.executable = "Game.exe";
+        game.dataPath = "Data";
+        GameInstance::applyDefinition(instance.settings(), game);
+        instance.settings()->set("InstanceKind", "Main");
+        instance.settings()->set("SourceGameDir", steam);
+        QCOMPARE(QDir(instance.gameRoot()), QDir(steam));
+
+        Task::State ended = Task::State::Inactive;
+        const auto run = [&](const QString& arguments, const std::function<void(LaunchTask*)>& whileRunning) {
+            instance.setCustomExecutables({ GameExecutable{
+                .name = "Writer", .path = "Tools/Writer/writer.exe", .arguments = arguments, .outputMod = "Writer Output" } });
+            auto* launch = instance.createLaunchTask("Writer");
+            connect(launch, &LaunchTask::readyForLaunch, launch, &LaunchTask::proceed);
+            QSignalSpy finished(launch, &Task::finished);
+            launch->start();
+            if (whileRunning) {
+                // the tool's own step is the only one that can be stopped: the game folder has been noted by then
+                QTRY_VERIFY_WITH_TIMEOUT(launch->canAbort(), 10000);
+                whileRunning(launch);
+            }
+            QVERIFY(finished.wait(60000) || finished.count() == 1);
+            QVERIFY(!instance.isRunning());
+            ended = launch->getState();
+        };
+        const auto outputMod = [&instance]() -> ModEntry {
+            for (const auto& mod : instance.modList()->mods()) {
+                if (mod.name == "Writer Output") {
+                    return mod;
+                }
+            }
+            return {};
+        };
+
+        // the report the tool writes into the game folder ends up in its output mod, linked back into the game
+        run("--print \"$INST_GAME_DIR/Data/Writer/report.txt\"", {});
+        QCOMPARE(ended, Task::State::Succeeded);
+        auto output = outputMod();
+        QVERIFY(!output.id.isEmpty());
+        QVERIFY(output.enabled);
+        const auto modReport = FS::PathCombine(instance.modList()->modDir(output.id), "Data/Writer/report.txt");
+        const auto gameReport = FS::PathCombine(steam, "Data/Writer/report.txt");
+        QVERIFY(readReport(modReport).contains("documents"));
+        QVERIFY(GameFiles::isSameFile(modReport, gameReport));
+        QVERIFY(QFileInfo(FS::PathCombine(steam, "Data/Writer")).isDir());
+        QCOMPARE(QFileInfo(FS::PathCombine(steam, "Data/Base.esm")).size(), 4);
+
+        // a tool that crashes still has its files moved: here it crashes half a second after it starts, and "it"
+        // writes a file, a log and a file of its own folder before that
+        run("--crash unused", [&](LaunchTask*) {
+            writeFile(FS::PathCombine(steam, "Data/late.txt"), "late");
+            writeFile(FS::PathCombine(steam, "Data/tool.log"), "log");
+            writeFile(FS::PathCombine(steam, "Tools/Writer/cache.txt"), "cache");
+        });
+        QCOMPARE(ended, Task::State::Failed);
+        output = outputMod();
+        const auto modLate = FS::PathCombine(instance.modList()->modDir(output.id), "Data/late.txt");
+        QCOMPARE(readFile(modLate), QByteArray("late"));
+        QVERIFY(GameFiles::isSameFile(modLate, FS::PathCombine(steam, "Data/late.txt")));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(instance.modList()->modDir(output.id), "Data/tool.log")));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(instance.modList()->modDir(output.id), "Tools/Writer/cache.txt")));
+        QCOMPARE(readFile(FS::PathCombine(steam, "Tools/Writer/cache.txt")), QByteArray("cache"));
+        QCOMPARE(readFile(FS::PathCombine(steam, "Data/tool.log")), QByteArray("log"));
+
+        // and so does one that is stopped
+        instance.modList()->setEnabled({ instance.modList()->indexOf(output.id) }, false);
+        run("--print \"$INST_GAME_DIR/Missing/x.txt\"", [&](LaunchTask* launch) {
+            writeFile(FS::PathCombine(steam, "Data/stopped.txt"), "stopped");
+            QVERIFY(launch->abort());
+        });
+        QCOMPARE(ended, Task::State::AbortedByUser);
+        output = outputMod();
+        QVERIFY(output.enabled);  // its files are used, so it is on again
+        const auto modStopped = FS::PathCombine(instance.modList()->modDir(output.id), "Data/stopped.txt");
+        QCOMPARE(readFile(modStopped), QByteArray("stopped"));
+        QVERIFY(GameFiles::isSameFile(modStopped, FS::PathCombine(steam, "Data/stopped.txt")));
+        QVERIFY(GameFiles::isSameFile(modLate, FS::PathCombine(steam, "Data/late.txt")));
+
+        // disabled, its files leave the game folder
+        instance.modList()->setEnabled({ instance.modList()->indexOf(output.id) }, false);
+        auto purge = instance.createDeployTask();
+        QSignalSpy purged(purge.get(), &Task::finished);
+        purge->start();
+        QVERIFY(purged.wait(30000) || purged.count() == 1);
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(steam, "Data/late.txt")));
+        QVERIFY(!QFileInfo::exists(gameReport));
+        QVERIFY(QFileInfo(FS::PathCombine(steam, "Data/Writer")).isDir());
     }
 
     void test_isolated_instance_launch()

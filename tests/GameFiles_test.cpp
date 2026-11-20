@@ -28,6 +28,7 @@
 
 #include <FileSystem.h>
 #include <game/Deployer.h>
+#include <game/ToolOutput.h>
 #include <game/GameFiles.h>
 #include <game/GameInstanceCreationTask.h>
 #include <game/PatternMatcher.h>
@@ -870,6 +871,105 @@ class GameFilesTest : public QObject {
         QCOMPARE(readFile(sky), QByteArray("sky from B"));
         QCOMPARE(readFile(FS::PathCombine(game, "Data/B.esp")), QByteArray("plugin B"));
         QCOMPARE(readFile(FS::PathCombine(dir.path(), "overwritten/Data/textures/sky.dds")), QByteArray("vanilla sky"));
+    }
+
+    void test_tool_output_found_and_collected()
+    {
+        QTemporaryDir dir;
+        const auto game = FS::PathCombine(dir.path(), "game");
+        const auto mods = FS::PathCombine(dir.path(), "mods");
+        writeFile(FS::PathCombine(game, "Data/Skyrim.esm"), "base");
+        writeFile(FS::PathCombine(game, "Data/Tool/tool.exe"), "tool");
+        QVERIFY(FS::ensureFolderPathExists(FS::PathCombine(game, "Data/Empty")));
+        writeFile(FS::PathCombine(mods, "A/Data/textures/a.dds"), "A");
+        writeFile(FS::PathCombine(mods, "A/Data/meshes/x.hkx"), "A x");
+        ModList list(mods, FS::PathCombine(dir.path(), "mods.json"));
+        QVERIFY(list.load().has_value());
+        const auto manifestPath = FS::PathCombine(dir.path(), "deployment.json");
+        const auto deploy = [&] {
+            DeployTask task(DeployTask::Params{ .gameDir = game,
+                                                .modsDir = mods,
+                                                .overwrittenDir = FS::PathCombine(dir.path(), "overwritten"),
+                                                .manifestPath = manifestPath,
+                                                .enabledMods = list.enabledMods() });
+            return runTask(task);
+        };
+        list.setEnabled({ list.indexOf("A") }, true);
+        QVERIFY(deploy());
+        const auto before = ToolOutput::take(game);
+        QVERIFY(before.dirs.contains("data/empty"));
+        QVERIFY(before.files.contains("data/skyrim.esm"));
+
+        // what a tool does: new files (one in a new folder, one in a folder that was empty), a mod file written anew,
+        // a mod file written into, a game file changed, its own cache and a log
+        QTest::qWait(20);  // a later modification time than deployment's
+        writeFile(FS::PathCombine(game, "Data/meshes/new/gen.hkx"), "generated");
+        writeFile(FS::PathCombine(game, "Data/Empty/note.txt"), "note");
+        QVERIFY(QFile::remove(FS::PathCombine(game, "Data/meshes/x.hkx")));
+        writeFile(FS::PathCombine(game, "Data/meshes/x.hkx"), "tool x");
+        {
+            QFile inPlace(FS::PathCombine(game, "Data/textures/a.dds"));
+            QVERIFY(inPlace.open(QIODevice::Append));
+            inPlace.write(" edited");
+        }
+        writeFile(FS::PathCombine(game, "Data/Skyrim.esm"), "changed base");
+        writeFile(FS::PathCombine(game, "Data/Tool/cache.bin"), "cache");
+        writeFile(FS::PathCombine(game, "Data/run.log"), "log");
+
+        auto manifest = DeploymentManifest::load(manifestPath);
+        QVERIFY(manifest.has_value());
+        const ToolOutput::Filter filter{ .excludePatterns = { "*.log" }, .ownDirs = { "Data/Tool" } };
+        auto changes = ToolOutput::find(game, before, *manifest, filter, {});
+        changes.created.sort();
+        QCOMPARE(changes.created, (QStringList{ "Data/Empty/note.txt", "Data/meshes/new/gen.hkx" }));
+        QCOMPARE(changes.replaced, QStringList{ "Data/meshes/x.hkx" });
+        QCOMPARE(changes.changedInPlace, QStringList{ "Data/textures/a.dds" });
+        QCOMPARE(changes.modOf.value("Data/textures/a.dds"), QString("A"));
+        QCOMPARE(changes.changedGameFiles, QStringList{ "Data/Skyrim.esm" });
+
+        const auto out = FS::PathCombine(mods, "Out");
+        QVERIFY(ToolOutput::collect(game, before, changes, out).has_value());
+        QCOMPARE(readFile(FS::PathCombine(out, "Data/meshes/new/gen.hkx")), QByteArray("generated"));
+        QCOMPARE(readFile(FS::PathCombine(out, "Data/Empty/note.txt")), QByteArray("note"));
+        QCOMPARE(readFile(FS::PathCombine(out, "Data/meshes/x.hkx")), QByteArray("tool x"));
+        QCOMPARE(readFile(FS::PathCombine(out, "Data/textures/a.dds")), QByteArray("A edited"));
+        // the tool's new folder went with its file; the folder that was there stays
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(game, "Data/meshes/new")));
+        QVERIFY(QFileInfo(FS::PathCombine(game, "Data/Empty")).isDir());
+        QCOMPARE(readFile(FS::PathCombine(game, "Data/Tool/cache.bin")), QByteArray("cache"));
+        QCOMPARE(readFile(FS::PathCombine(game, "Data/Skyrim.esm")), QByteArray("changed base"));
+        // the mod's file the tool wrote anew is the mod's own again
+        QCOMPARE(readFile(FS::PathCombine(mods, "A/Data/meshes/x.hkx")), QByteArray("A x"));
+
+        // the output mod last: its files win
+        QVERIFY(list.load().has_value());
+        list.setOrder({ "A", "Out" });
+        list.setEnabled({ list.indexOf("A"), list.indexOf("Out") }, true);
+        QVERIFY(deploy());
+        QVERIFY(GameFiles::isSameFile(FS::PathCombine(out, "Data/meshes/x.hkx"), FS::PathCombine(game, "Data/meshes/x.hkx")));
+        QVERIFY(GameFiles::isSameFile(FS::PathCombine(out, "Data/textures/a.dds"), FS::PathCombine(game, "Data/textures/a.dds")));
+        QVERIFY(GameFiles::isSameFile(FS::PathCombine(out, "Data/meshes/new/gen.hkx"), FS::PathCombine(game, "Data/meshes/new/gen.hkx")));
+
+        // the tool runs again and writes into its own earlier output: that is its output already
+        const auto again = ToolOutput::take(game);
+        QTest::qWait(20);
+        {
+            QFile inPlace(FS::PathCombine(game, "Data/meshes/new/gen.hkx"));
+            QVERIFY(inPlace.open(QIODevice::Append));
+            inPlace.write(" again");
+        }
+        manifest = DeploymentManifest::load(manifestPath);
+        QVERIFY(manifest.has_value());
+        QVERIFY(ToolOutput::find(game, again, *manifest, filter, "Out").isEmpty());
+        QCOMPARE(readFile(FS::PathCombine(out, "Data/meshes/new/gen.hkx")), QByteArray("generated again"));
+
+        // disabled, the output leaves the game and the mods' own files are back
+        list.setEnabled({ list.indexOf("Out") }, false);
+        QVERIFY(deploy());
+        QCOMPARE(readFile(FS::PathCombine(game, "Data/meshes/x.hkx")), QByteArray("A x"));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(game, "Data/meshes/new")));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(game, "Data/Empty/note.txt")));
+        QVERIFY(QFileInfo(FS::PathCombine(game, "Data/Empty")).isDir());
     }
 
     void test_deploy_redeploys_reinstalled_mod()

@@ -1229,7 +1229,7 @@ void setUpNemesis(GameInstance* instance, QWidget* parent)
     const auto relative = dataPath.isEmpty() ? Nemesis::k_engine : dataPath + '/' + Nemesis::k_engine;
     auto tools = instance->customExecutables();
     if (std::none_of(tools.begin(), tools.end(), [&relative](const GameExecutable& tool) { return tool.path.compare(relative, Qt::CaseInsensitive) == 0; })) {
-        tools << GameExecutable{ .name = "Nemesis", .path = relative };
+        tools << GameExecutable{ .name = "Nemesis", .path = relative, .outputMod = "Nemesis Output" };
         instance->setCustomExecutables(tools);
     }
 

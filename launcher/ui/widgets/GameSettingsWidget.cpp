@@ -106,12 +106,16 @@ QWidget* GameSettingsWidget::createGameTab()
     auto* toolsBox = new QGroupBox(tr("Tools"), tab);
     auto* toolsLayout = new QVBoxLayout(toolsBox);
     auto* toolsInfo = new QLabel(tr("Tools started from here (xEdit, LOOT, BodySlide, ...) see this instance's game folder, load order and "
-                                    "profile, exactly like the game. Paths may be relative to the game folder."),
+                                    "profile, exactly like the game. Paths may be relative to the game folder. Files a tool writes into the "
+                                    "game folder go into its output mod once it exits, so they can be disabled or removed like any mod; "
+                                    "with no output mod they stay in the game folder."),
                                  toolsBox);
     toolsInfo->setWordWrap(true);
     toolsLayout->addWidget(toolsInfo);
-    m_executables = new QTableWidget(0, 4, toolsBox);
-    m_executables->setHorizontalHeaderLabels({ tr("Name"), tr("Executable"), tr("Arguments"), tr("Working folder") });
+    m_executables = new QTableWidget(0, 5, toolsBox);
+    m_executables->setHorizontalHeaderLabels({ tr("Name"), tr("Executable"), tr("Arguments"), tr("Working folder"), tr("Output mod") });
+    m_executables->horizontalHeaderItem(4)->setToolTip(tr("The mod that files the tool writes into the game folder go into (made when "
+                                                          "needed). Empty: they stay in the game folder."));
     m_executables->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
     // a long path keeps its file name in sight instead of wrapping to "C:..."
     m_executables->setWordWrap(false);
@@ -131,7 +135,8 @@ QWidget* GameSettingsWidget::createGameTab()
             // inside the game folder the path is kept relative, so copies and exports of the instance use their own tool
             const auto relative = QDir(m_instance->gameRoot()).relativeFilePath(file);
             const auto path = relative.startsWith("..") || QDir::isAbsolutePath(relative) ? file : relative;
-            addExecutableRow(QFileInfo(file).completeBaseName(), QDir::toNativeSeparators(path), QString(), QString());
+            const auto name = QFileInfo(file).completeBaseName();
+            addExecutableRow(name, QDir::toNativeSeparators(path), QString(), QString(), tr("%1 Output").arg(name));
         }
     });
     connect(remove, &QPushButton::clicked, this, [this] {
@@ -219,7 +224,7 @@ QWidget* GameSettingsWidget::createConsoleTab()
     return tab;
 }
 
-void GameSettingsWidget::addExecutableRow(const QString& name, const QString& path, const QString& arguments, const QString& workingDir)
+void GameSettingsWidget::addExecutableRow(const QString& name, const QString& path, const QString& arguments, const QString& workingDir, const QString& outputMod)
 {
     const int row = m_executables->rowCount();
     m_executables->insertRow(row);
@@ -229,6 +234,7 @@ void GameSettingsWidget::addExecutableRow(const QString& name, const QString& pa
     m_executables->setItem(row, 1, pathItem);
     m_executables->setItem(row, 2, new QTableWidgetItem(arguments));
     m_executables->setItem(row, 3, new QTableWidgetItem(workingDir));
+    m_executables->setItem(row, 4, new QTableWidgetItem(outputMod));
 }
 
 void GameSettingsWidget::loadSettings()
@@ -258,7 +264,7 @@ void GameSettingsWidget::loadSettings()
         m_launchExecutable->setCurrentText(m_instance->defaultExecutableName());
         m_executables->setRowCount(0);
         for (const auto& exe : m_instance->customExecutables()) {
-            addExecutableRow(exe.name, QDir::toNativeSeparators(exe.path), exe.arguments, QDir::toNativeSeparators(exe.workingDir));
+            addExecutableRow(exe.name, QDir::toNativeSeparators(exe.path), exe.arguments, QDir::toNativeSeparators(exe.workingDir), exe.outputMod);
         }
         m_consoleBox->setChecked(settings->get("OverrideConsole").toBool());
         m_gameTimeBox->setChecked(settings->get("OverrideGameTime").toBool());
@@ -301,7 +307,11 @@ void GameSettingsWidget::saveSettings()
         for (int row = 0; row < m_executables->rowCount(); row++) {
             auto text = [this, row](int column) { return m_executables->item(row, column) ? m_executables->item(row, column)->text().trimmed() : QString(); };
             if (!text(0).isEmpty() && !text(1).isEmpty()) {
-                tools << GameExecutable{ .name = text(0), .path = QDir::fromNativeSeparators(text(1)), .arguments = text(2), .workingDir = QDir::fromNativeSeparators(text(3)) };
+                tools << GameExecutable{ .name = text(0),
+                                         .path = QDir::fromNativeSeparators(text(1)),
+                                         .arguments = text(2),
+                                         .workingDir = QDir::fromNativeSeparators(text(3)),
+                                         .outputMod = text(4) };
             }
         }
         m_instance->setCustomExecutables(tools);

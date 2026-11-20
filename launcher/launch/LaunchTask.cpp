@@ -93,36 +93,41 @@ void LaunchTask::onStepFinished()
     // initial -> just start the first step
     if (currentStep == -1) {
         currentStep++;
+        m_startedSteps << currentStep;
         m_steps[currentStep]->start();
         return;
     }
 
     auto step = m_steps[currentStep];
-    if (step->wasSuccessful()) {
-        // end?
-        if (currentStep == m_steps.size() - 1) {
-            finalizeSteps(true, QString());
-        } else {
-            currentStep++;
-            step = m_steps[currentStep];
-            step->start();
+    if (!m_failure && !step->wasSuccessful()) {
+        m_failure = step->getState();
+        m_failReason = step->failReason();
+    }
+    // after a failure only the steps that run anyway do
+    for (auto next = currentStep + 1; next < m_steps.size(); next++) {
+        if (!m_failure || m_steps[next]->runsAfterFailure()) {
+            currentStep = next;
+            m_startedSteps << currentStep;
+            m_steps[currentStep]->start();
+            return;
         }
-    } else if (step->getState() == Task::State::AbortedByUser) {
+    }
+    if (m_failure == Task::State::AbortedByUser) {
         // the user killed it: not a crash
-        for (auto finished = currentStep; finished >= 0; finished--) {
-            m_steps[finished]->finalize();
+        for (auto it = m_startedSteps.crbegin(); it != m_startedSteps.crend(); ++it) {
+            m_steps[*it]->finalize();
         }
         m_instance->setRunning(false);
         emitAborted();
     } else {
-        finalizeSteps(false, step->failReason());
+        finalizeSteps(!m_failure, m_failReason);
     }
 }
 
 void LaunchTask::finalizeSteps(bool successful, const QString& error)
 {
-    for (auto step = currentStep; step >= 0; step--) {
-        m_steps[step]->finalize();
+    for (auto it = m_startedSteps.crbegin(); it != m_startedSteps.crend(); ++it) {
+        m_steps[*it]->finalize();
     }
     if (successful) {
         emitSucceeded();

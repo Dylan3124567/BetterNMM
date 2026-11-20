@@ -40,6 +40,7 @@ struct GameExecutable {
     QString arguments;
     QString workingDir;  ///< empty = the executable's folder
     bool builtIn = false;
+    QString outputMod;  ///< mod that files it writes into the game folder go into; empty: they stay there
 };
 
 /**

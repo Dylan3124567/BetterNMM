@@ -91,6 +91,8 @@ set(LAUNCHER_SOURCES
     game/CrashReport.h
     game/HealthCheck.cpp
     game/HealthCheck.h
+    game/ToolOutput.cpp
+    game/ToolOutput.h
     game/Deployer.cpp
     game/Deployer.h
     game/Fomod.cpp
@@ -157,6 +159,8 @@ set(LAUNCHER_SOURCES
     launch/steps/LaunchGameProcess.h
     launch/steps/PrepareGame.cpp
     launch/steps/PrepareGame.h
+    launch/steps/CaptureToolOutput.cpp
+    launch/steps/CaptureToolOutput.h
     launch/steps/QuitAfterGameStop.cpp
     launch/steps/QuitAfterGameStop.h
     launch/steps/TextPrint.cpp

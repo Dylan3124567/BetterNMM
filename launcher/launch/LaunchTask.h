@@ -133,6 +133,9 @@ class LaunchTask : public Task {
     QList<shared_qobject_ptr<LaunchStep>> m_steps;
     QMap<QString, QString> m_censorFilter;
     int currentStep = -1;
+    QList<int> m_startedSteps;  ///< in the order they started; a failure skips the steps in between
+    std::optional<Task::State> m_failure;  ///< how the first step that did not succeed ended
+    QString m_failReason;
     State state = NotStarted;
     qint64 m_pid = -1;
     std::optional<GameCrash> m_crash;

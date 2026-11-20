@@ -48,7 +48,7 @@ class GameSettingsWidget : public QWidget {
    private:
     QWidget* createGameTab();
     QWidget* createConsoleTab();
-    void addExecutableRow(const QString& name, const QString& path, const QString& arguments, const QString& workingDir);
+    void addExecutableRow(const QString& name, const QString& path, const QString& arguments, const QString& workingDir, const QString& outputMod);
 
     GameInstance* m_instance;
 
