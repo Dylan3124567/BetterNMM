@@ -94,6 +94,8 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     m_ignoreUpdates = addAction(tr("&Ignore Updates"), tr("Stop pointing out newer versions of the selected mods, and leave them out of "
                                                          "Update. Choose it again to stop ignoring them."));
     m_ignoreUpdates->setCheckable(true);
+    m_options = addAction(tr("Change Installer &Options..."), tr("Run the selected mod's installer again with the options it has now "
+                                                                 "picked, and install it anew with the ones you change."));
     m_nexusPage = addAction(tr("View on &Nexus"), tr("Open the selected mods' pages on Nexus Mods."));
     auto* folder = addAction(tr("View &Folder"), tr("Open the folder of the selected mod, or of all mods."), "viewfolder");
     auto* redeploy = addAction(tr("Re&deploy"), tr("Make the game folder match the enabled mods again."));
@@ -171,6 +173,11 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     connect(autoSort, &QAction::triggered, this, [this] { ModInstallFlow::autoSort(m_instance, this); });
     connect(check, &QAction::triggered, this, &ModsPage::checkForUpdates);
     connect(m_update, &QAction::triggered, this, &ModsPage::updateSelected);
+    connect(m_options, &QAction::triggered, this, [this] {
+        if (const auto rows = selectedRows(); rows.size() == 1) {
+            ModInstallFlow::changeInstallerOptions(m_instance, m_mods->mods()[rows.first()].id, this);
+        }
+    });
     connect(m_nexusPage, &QAction::triggered, this, [this] {
         for (int row : selectedRows()) {
             const auto& mod = m_mods->mods()[row];
@@ -491,6 +498,7 @@ void ModsPage::updateActions()
     m_nexusPage->setEnabled(anyNexus);
     m_ignoreUpdates->setEnabled(anyMod);
     m_ignoreUpdates->setChecked(anyMod && allIgnored);
+    m_options->setEnabled(rows.size() == 1 && anyMod);
 }
 
 void ModsPage::moveSelection(int direction)

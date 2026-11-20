@@ -60,8 +60,13 @@ class HoverFilter : public QObject {
 
 }  // namespace
 
-FomodDialog::FomodDialog(Fomod::Module module, QString root, Fomod::Context context, const QString& modName, QWidget* parent)
-    : QDialog(parent), m_module(std::move(module)), m_root(std::move(root)), m_base(std::move(context))
+FomodDialog::FomodDialog(Fomod::Module module,
+                         QString root,
+                         Fomod::Context context,
+                         const QString& modName,
+                         QWidget* parent,
+                         QList<Fomod::Selection> preset)
+    : QDialog(parent), m_module(std::move(module)), m_root(std::move(root)), m_base(std::move(context)), m_preset(std::move(preset))
 {
     setWindowTitle(tr("Install %1").arg(m_module.name.isEmpty() ? modName : m_module.name));
     auto* layout = new QVBoxLayout(this);
@@ -167,7 +172,7 @@ void FomodDialog::showStep(int index)
     const auto context = contextBefore(index);
     const bool firstVisit = std::none_of(m_selections.begin(), m_selections.end(), [index](const Fomod::Selection& s) { return s.step == index; });
     if (firstVisit) {
-        m_selections << Fomod::defaultSelections(m_module, index, context);
+        m_selections << Fomod::startingSelections(m_module, index, context, m_preset);
     }
 
     for (int g = 0; g < step.groups.size(); g++) {

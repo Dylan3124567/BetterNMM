@@ -208,8 +208,10 @@ void ModList::upsert(const ModEntry& entry)
 {
     if (const int row = indexOf(entry.id); row >= 0) {
         const bool enabled = m_mods[row].enabled;
+        const bool ignoreUpdates = m_mods[row].ignoreUpdates;
         m_mods[row] = entry;
         m_mods[row].enabled = enabled;
+        m_mods[row].ignoreUpdates = ignoreUpdates;
         emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
     } else {
         beginInsertRows({}, static_cast<int>(m_mods.size()), static_cast<int>(m_mods.size()));

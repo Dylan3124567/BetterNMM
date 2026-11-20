@@ -129,4 +129,9 @@ QList<FileItem> filesToInstall(const Module& module, const QList<Selection>& sel
 /// "exactly one" groups. Used as the wizard's starting point.
 QList<Selection> defaultSelections(const Module& module, int stepIndex, const Context& context);
 
+/// The selections a step starts with when the installer runs again for a mod that has @p preset picked: a group keeps the
+/// options of @p preset in it; a group with none of them starts empty when it may be (the person cleared it), unless
+/// @p preset has nothing in the whole step (it was not shown then), where it gets defaultSelections
+QList<Selection> startingSelections(const Module& module, int stepIndex, const Context& context, const QList<Selection>& preset);
+
 }  // namespace Fomod

@@ -46,8 +46,18 @@ GameInstance* chooseInstance(const QString& gameDomain, QWidget* parent, GameIns
  * Installs a mod archive into the instance: extracts it, runs its FOMOD installer if it has one, stages the files,
  * enables the mod and deploys. @p metadata carries what is known about the mod (name, version, Nexus ids). While the
  * game runs (a download finishing mid-game) the mod is installed and deployed once the game stops.
+ *
+ * When @p metadata.id is an installed mod, that mod is installed anew in its place without asking, its FOMOD installer
+ * starting with the options it has now (@p metadata.choices, or else the options its files show).
  */
 bool installArchive(GameInstance* instance, const QString& archive, ModEntry metadata, QWidget* parent);
+
+/**
+ * Runs the FOMOD installer of the installed mod @p modId again, with the options it has now picked, and installs it anew
+ * with what the person picks: its place in the list, enabled state and Nexus details stay. Its archive comes from the
+ * downloads folder; when it is not there the person is asked for it.
+ */
+bool changeInstallerOptions(GameInstance* instance, const QString& modId, QWidget* parent);
 
 /// Details (name, version, game id, requirements) of mods of @p game from Nexus Mods, with a progress dialog; no API key
 /// needed. Mods Nexus Mods no longer has are left out.

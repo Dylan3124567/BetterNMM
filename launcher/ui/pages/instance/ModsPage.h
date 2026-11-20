@@ -63,4 +63,5 @@ class ModsPage : public ListPage {
     QAction* m_update = nullptr;
     QAction* m_nexusPage = nullptr;
     QAction* m_ignoreUpdates = nullptr;
+    QAction* m_options = nullptr;
 };

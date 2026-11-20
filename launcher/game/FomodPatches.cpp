@@ -21,6 +21,7 @@
 #include <QCryptographicHash>
 #include <QDebug>
 #include <QDir>
+#include <QDirListing>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -486,6 +487,26 @@ QList<QStringList> choiceNames(const Fomod::Module& module, const QList<Fomod::S
         }
     }
     return out;
+}
+
+QList<Fomod::Selection> recordedOptions(const Fomod::Module& module, const QList<QStringList>& choices)
+{
+    auto out = fromNames(module, choices);
+    sortSelections(out);
+    return out;
+}
+
+QList<Fomod::Selection> installedOptions(const Fomod::Module& module, const QString& fomodRoot, const QString& folder, const FileStates& fileState)
+{
+    Source source;
+    source.module = module;
+    const QDir root(fomodRoot);
+    for (const auto& entry : QDirListing(fomodRoot, QDirListing::IteratorFlag::Recursive | QDirListing::IteratorFlag::FilesOnly |
+                                                        QDirListing::IteratorFlag::IncludeHidden)) {
+        const auto path = root.relativeFilePath(entry.absoluteFilePath());
+        source.entries.insert(path.toLower(), Entry{ .path = path, .size = entry.size() });
+    }
+    return inferred(source, folder, fileState);
 }
 
 Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& cacheDir, const std::function<void(int, int)>& progress)

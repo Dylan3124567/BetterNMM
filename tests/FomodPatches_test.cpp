@@ -412,6 +412,41 @@ class FomodPatchesTest : public QObject {
         QVERIFY(!QFileInfo::exists(FS::PathCombine(dir.path(), "mods/evil.esp")));
     }
 
+    void test_changed_options_start_from_the_installed_ones()
+    {
+        // the archive unpacked, as installing has it
+        const auto unpacked = FS::PathCombine(m_dir.path(), "unpacked");
+        writeFile(FS::PathCombine(unpacked, "Lights/fomod/ModuleConfig.xml"), g_lights);
+        for (const auto& [name, data] : g_files) {
+            writeFile(FS::PathCombine(unpacked, name), data);
+        }
+        auto module = Fomod::parse(g_lights);
+        QVERIFY(module.has_value());
+        const Fomod::Context context{ .fileState = plugins(g_others) };
+        const auto installed = FomodPatches::installedOptions(*module, FS::PathCombine(unpacked, "Lights"), m_mod.folder, context.fileState);
+        QCOMPARE(FomodPatches::choiceNames(*module, installed, context),
+                 (QList<QStringList>{ { "Main", "Version", "Standard" }, { "Patches", "Weather", "Vanilla weather" }, { "Patches", "Extras", "Readme" } }));
+
+        // recorded names: those the installer no longer has are left out
+        const auto recorded = FomodPatches::recordedOptions(
+            *module, { { "Patches", "Weather", "Weather patch" }, { "Main", "Version", "Lite" }, { "Gone", "Group", "Option" } });
+        QCOMPARE(FomodPatches::choiceNames(*module, recorded, context),
+                 (QList<QStringList>{ { "Main", "Version", "Lite" }, { "Patches", "Weather", "Weather patch" } }));
+
+        // the wizard starts from them: Lite instead of the recommended Standard, and Extras empty although Readme is
+        // recommended, since the mod has nothing picked there
+        QCOMPARE(FomodPatches::choiceNames(*module, Fomod::startingSelections(*module, 0, context, recorded), context),
+                 (QList<QStringList>{ { "Main", "Version", "Lite" } }));
+        const auto patches = Fomod::startingSelections(*module, 1, context, recorded);
+        QCOMPARE(patches.size(), 1);
+        QCOMPARE(module->steps[1].groups[patches[0].group].plugins[patches[0].plugin].name, QString("Weather patch"));
+        // a step the mod has nothing picked in was not shown then: the installer's defaults
+        QCOMPARE(Fomod::startingSelections(*module, 2, context, recorded).size(), Fomod::defaultSelections(*module, 2, context).size());
+        QVERIFY(!Fomod::defaultSelections(*module, 2, context).isEmpty());
+        // without a preset it is the defaults
+        QCOMPARE(Fomod::startingSelections(*module, 1, context, {}).size(), Fomod::defaultSelections(*module, 1, context).size());
+    }
+
     void test_choice_names_skip_hidden_steps()
     {
         auto module = Fomod::parse(g_lights);

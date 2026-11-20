@@ -94,4 +94,16 @@ Result<Installed> install(const Mod& mod, const QList<Patch>& patches, const Fil
 /// The options picked in an installer, of the steps it showed, as Mod::choices holds them
 QList<QStringList> choiceNames(const Fomod::Module& module, const QList<Fomod::Selection>& selections, const Fomod::Context& base);
 
+/// @p choices (as Mod::choices holds them) as options of @p module; names it does not have any more are left out
+QList<Fomod::Selection> recordedOptions(const Fomod::Module& module, const QList<QStringList>& choices);
+
+/**
+ * The options of @p module that the mod in @p folder was installed with, judged by its files the way the check judges a
+ * mod without recorded options. @p fomodRoot is the installer's unpacked archive: the folder holding "fomod".
+ */
+QList<Fomod::Selection> installedOptions(const Fomod::Module& module,
+                                         const QString& fomodRoot,
+                                         const QString& folder,
+                                         const FileStates& fileState);
+
 }  // namespace FomodPatches

@@ -405,6 +405,13 @@ class LoadOrderTest : public QObject {
         QVERIFY(reloaded.load().has_value());
         QVERIFY(reloaded.mods()[0].ignoreUpdates);
         QVERIFY(!reloaded.mods()[0].hasUpdate());
+        // installing the mod again (an update from disk, changed installer options) keeps it ignored
+        auto replacement = reloaded.mods()[0];
+        replacement.ignoreUpdates = false;
+        replacement.stamp = 5;
+        reloaded.upsert(replacement);
+        QVERIFY(reloaded.mods()[0].ignoreUpdates);
+        QCOMPARE(reloaded.mods()[0].stamp, 5);
         reloaded.setIgnoreUpdates({ 0 }, false);
         QVERIFY(reloaded.mods()[0].hasUpdate());
     }

@@ -33,7 +33,14 @@ class QVBoxLayout;
 class FomodDialog : public QDialog {
     Q_OBJECT
    public:
-    FomodDialog(Fomod::Module module, QString root, Fomod::Context context, const QString& modName, QWidget* parent = nullptr);
+    /// @p preset: options to start with instead of the installer's defaults, in the groups it has options for (the
+    /// options a mod has now, when they are changed)
+    FomodDialog(Fomod::Module module,
+                QString root,
+                Fomod::Context context,
+                const QString& modName,
+                QWidget* parent = nullptr,
+                QList<Fomod::Selection> preset = {});
     ~FomodDialog() override;
 
     /// Files to install, valid after the dialog was accepted
@@ -54,6 +61,7 @@ class FomodDialog : public QDialog {
     Fomod::Module m_module;
     QString m_root;
     Fomod::Context m_base;
+    QList<Fomod::Selection> m_preset;
     QList<Fomod::Selection> m_selections;
     QList<int> m_history;
     int m_current = -1;

@@ -322,6 +322,31 @@ QList<FileItem> filesToInstall(const Module& module, const QList<Selection>& sel
     return files;
 }
 
+QList<Selection> startingSelections(const Module& module, int stepIndex, const Context& context, const QList<Selection>& preset)
+{
+    const auto defaults = defaultSelections(module, stepIndex, context);
+    if (stepIndex < 0 || stepIndex >= module.steps.size()) {
+        return defaults;
+    }
+    const auto& step = module.steps[stepIndex];
+    const bool stepPreset = std::any_of(preset.begin(), preset.end(), [stepIndex](const Selection& s) { return s.step == stepIndex; });
+    QList<Selection> out;
+    for (int g = 0; g < step.groups.size(); g++) {
+        const auto inGroup = [stepIndex, g](const Selection& s) { return s.step == stepIndex && s.group == g; };
+        const bool groupPreset = std::any_of(preset.begin(), preset.end(), inGroup);
+        const auto type = step.groups[g].type;
+        if (stepPreset && !groupPreset && (type == GroupType::SelectAny || type == GroupType::SelectAtMostOne)) {
+            continue;
+        }
+        for (const auto& selection : groupPreset ? preset : defaults) {
+            if (inGroup(selection) && selection.plugin >= 0 && selection.plugin < step.groups[g].plugins.size()) {
+                out << selection;
+            }
+        }
+    }
+    return out;
+}
+
 QList<Selection> defaultSelections(const Module& module, int stepIndex, const Context& context)
 {
     QList<Selection> out;

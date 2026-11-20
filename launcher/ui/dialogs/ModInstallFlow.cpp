@@ -25,6 +25,7 @@
 #include <QLabel>
 #include <QFutureWatcher>
 #include <QDialogButtonBox>
+#include <QDebug>
 #include <QDir>
 #include <QDirListing>
 #include <QFileDialog>
@@ -524,7 +525,10 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
     // a mod that is already installed (the same Nexus mod, or for a file from disk the same name or archive) can be
     // replaced, keeping its place and state; No installs this one next to it
     QString id;
-    if (const int row = mods->indexOfInstalled(metadata, QFileInfo(archive).fileName()); row >= 0) {
+    const bool reinstall = !metadata.id.isEmpty() && mods->indexOf(metadata.id) >= 0;
+    if (reinstall) {
+        id = metadata.id;
+    } else if (const int row = mods->indexOfInstalled(metadata, QFileInfo(archive).fileName()); row >= 0) {
         const auto existing = mods->mods()[row];
         const auto question = existing.version.isEmpty() || metadata.version.isEmpty()
                                   ? QObject::tr("%1 is installed already. Replace it with this one?").arg(existing.name)
@@ -565,7 +569,18 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
         }
         Fomod::Context context;
         context.fileState = fileStates(instance);
-        FomodDialog wizard(*module, analysis.fomodRoot, context, metadata.name, parent);
+        QList<Fomod::Selection> preset;
+        if (reinstall) {
+            const auto dir = mods->modDir(id);
+            const auto folder = game.dataPath.isEmpty() ? dir : FS::PathCombine(dir, game.dataPath);
+            preset = metadata.choices.isEmpty()
+                         ? FomodPatches::installedOptions(*module, analysis.fomodRoot, folder, context.fileState)
+                         : FomodPatches::recordedOptions(*module, metadata.choices);
+        }
+        FomodDialog wizard(*module, analysis.fomodRoot, context, metadata.name, parent, preset);
+        if (reinstall) {
+            wizard.setWindowTitle(QObject::tr("Change installer options: %1").arg(metadata.name));
+        }
         if (wizard.exec() != QDialog::Accepted) {
             return false;
         }
@@ -575,6 +590,11 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
             showError(parent, QObject::tr("Installing %1 failed").arg(metadata.name), staged.error());
             return false;
         }
+    } else if (reinstall) {
+        showError(parent, QObject::tr("Change installer options"),
+                  QObject::tr("%1 has no installer with options to pick: %2 holds no fomod/ModuleConfig.xml.")
+                      .arg(metadata.name, QFileInfo(archive).fileName()));
+        return false;
     } else {
         // the files of a scripted installer are usually options to pick from, so copying them all rarely works
         const bool scripted = !analysis.fomodRoot.isEmpty() && !ModInstaller::resolvePath(analysis.fomodRoot, "fomod/script.cs").isEmpty();
@@ -601,6 +621,19 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
         id = mods->uniqueId(metadata.name);
     }
     const auto target = mods->modDir(id);
+    // the copy it replaces: files hidden in the conflicts view stay hidden, and its plugins keep the state they have
+    QStringList hidden;
+    QSet<QString> pluginsBefore;
+    if (QFileInfo(target).isDir()) {
+        const QDir root(target);
+        for (const auto& entry : QDirListing(target, QDirListing::IteratorFlag::Recursive | QDirListing::IteratorFlag::FilesOnly |
+                                                         QDirListing::IteratorFlag::IncludeHidden)) {
+            if (const auto rel = root.relativeFilePath(entry.absoluteFilePath()); ModList::isHidden(rel)) {
+                hidden << rel.chopped(ModList::HiddenSuffix.size());
+            }
+        }
+        pluginsBefore = pluginsIn(target);
+    }
     // deployed links of the old version keep it alive on disk until the next deploy replaces them; all or nothing, so a
     // file in use never leaves the old version half deleted
     if (auto removed = GameFiles::removeTreeWhole(target); !removed) {
@@ -614,6 +647,12 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
                   QObject::tr("Could not move the mod into place: %1").arg(QString::fromStdString(ec.message())));
         return false;
     }
+    for (const auto& path : std::as_const(hidden)) {
+        if (const auto file = FS::PathCombine(target, path); QFileInfo(file).isFile() && !QFile::rename(file, file + ModList::HiddenSuffix)) {
+            qWarning() << "Could not hide" << file << "again";
+        }
+    }
+    const auto newPlugins = pluginsIn(target) - pluginsBefore;
 
     metadata.id = id;
     metadata.enabled = true;
@@ -627,14 +666,45 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
 
     // plugins the mod brings are switched on, the way they would be after installing it by hand
     if (instance->isRunning()) {
-        deployAfterExit(instance, pluginsIn(target), parent);
+        deployAfterExit(instance, newPlugins, parent);
         return true;
     }
     if (!deploy(instance, parent)) {
         return false;
     }
-    activatePlugins(instance, pluginsIn(target), parent);
+    activatePlugins(instance, newPlugins, parent);
     return true;
+}
+
+bool changeInstallerOptions(GameInstance* instance, const QString& modId, QWidget* parent)
+{
+    const auto title = QObject::tr("Change installer options");
+    if (refuseWhileRunning(instance, parent)) {
+        return false;
+    }
+    const int row = instance->modList()->indexOf(modId);
+    if (row < 0) {
+        return false;
+    }
+    const auto entry = instance->modList()->mods()[row];
+    auto archive = entry.archive.isEmpty() ? QString() : FS::PathCombine(instance->downloadsDir(), entry.archive);
+    if (archive.isEmpty() || !QFileInfo(archive).isFile()) {
+        const auto why = entry.archive.isEmpty()
+                             ? QObject::tr("BetterNMM does not know which archive %1 was installed from.").arg(entry.name)
+                             : QObject::tr("%1 was installed from %2, which is not in the downloads folder any more.").arg(entry.name, entry.archive);
+        if (QMessageBox::question(parent, title, why + "\n\n" + QObject::tr("Choose the archive to run its installer from?")) != QMessageBox::Yes) {
+            return false;
+        }
+        auto start = QDir(instance->downloadsDir()).absolutePath();
+        if (!QFileInfo(start).isDir()) {
+            start = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+        }
+        archive = QFileDialog::getOpenFileName(parent, title, start, QObject::tr("Mod archives (*.zip *.7z *.rar);;All files (*)"));
+        if (archive.isEmpty()) {
+            return false;
+        }
+    }
+    return installArchive(instance, archive, entry, parent);
 }
 
 void queueInstall(const QString& instanceId, const QString& archive, const ModEntry& metadata)

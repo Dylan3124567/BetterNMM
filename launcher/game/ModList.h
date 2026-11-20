@@ -68,7 +68,7 @@ class ModList : public QAbstractTableModel {
     /// A folder name under mods/ not used yet, derived from @p name
     QString uniqueId(const QString& name) const;
 
-    /// Adds a mod or replaces the one with the same id (keeping its position and enabled state)
+    /// Adds a mod or replaces the one with the same id (keeping its position, enabled state and ignored updates)
     void upsert(const ModEntry& entry);
     void setEnabled(const QList<int>& rows, bool enabled);
     /// Moves the rows by @p offset positions (negative = higher priority loses, i.e. up)
