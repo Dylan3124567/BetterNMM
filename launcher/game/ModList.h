@@ -58,6 +58,9 @@ class ModList : public QAbstractTableModel {
     const QList<ModEntry>& mods() const { return m_mods; }
     QList<ModEntry> enabledMods() const;
     int indexOf(const QString& id) const;
+    /// The installed mod that installing @p metadata from @p archiveName replaces: the same Nexus mod with the same name,
+    /// or for a file without Nexus details (from disk) the mod installed from a file of that name; -1 when none
+    int indexOfInstalled(const ModEntry& metadata, const QString& archiveName) const;
 
     /// A folder name under mods/ not used yet, derived from @p name
     QString uniqueId(const QString& name) const;

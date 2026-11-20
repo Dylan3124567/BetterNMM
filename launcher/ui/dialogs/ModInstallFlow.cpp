@@ -463,15 +463,11 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
         metadata.version = analysis.version;
     }
 
-    // a mod that is already installed (the same Nexus mod, or for a file from disk the same name) can be replaced,
-    // keeping its place and state; No installs this one next to it
+    // a mod that is already installed (the same Nexus mod, or for a file from disk the same name or archive) can be
+    // replaced, keeping its place and state; No installs this one next to it
     QString id;
-    for (const auto& existing : mods->mods()) {
-        const bool same = existing.name.compare(metadata.name, Qt::CaseInsensitive) == 0 &&
-                          (metadata.nexusModId > 0 ? existing.nexusModId == metadata.nexusModId : existing.nexusModId <= 0);
-        if (!same) {
-            continue;
-        }
+    if (const int row = mods->indexOfInstalled(metadata, QFileInfo(archive).fileName()); row >= 0) {
+        const auto existing = mods->mods()[row];
         const auto question = existing.version.isEmpty() || metadata.version.isEmpty()
                                   ? QObject::tr("%1 is installed already. Replace it with this one?").arg(existing.name)
                                   : QObject::tr("%1 is installed already (version %2). Replace it with version %3?")
@@ -484,8 +480,18 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
         }
         if (answer == QMessageBox::Yes) {
             id = existing.id;
+            // a file from disk knows nothing of its Nexus mod; the copy it replaces does
+            if (metadata.nexusModId <= 0) {
+                metadata.name = existing.name;
+                metadata.nexusGame = existing.nexusGame;
+                metadata.nexusModId = existing.nexusModId;
+                metadata.nexusFileId = existing.nexusFileId;
+                metadata.latestVersion = existing.latestVersion;
+                if (metadata.version.isEmpty()) {
+                    metadata.version = existing.version;
+                }
+            }
         }
-        break;
     }
 
     if (!analysis.fomodConfig.isEmpty()) {

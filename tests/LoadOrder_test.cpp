@@ -356,6 +356,12 @@ class LoadOrderTest : public QObject {
         QCOMPARE(a.nexusModId, 42);
         QCOMPARE(a.latestVersion, QString("1.1"));
         QVERIFY(a.enabled);
+        // reinstalling a Nexus mod's archive from disk replaces it (no Nexus details, a name made from the file name)
+        reloaded.upsert(ModEntry{ .id = "A", .name = "Mod A", .nexusModId = 42, .archive = "Mod A-42-1-0-1700000000.7z" });
+        QCOMPARE(reloaded.indexOfInstalled(ModEntry{ .name = "Mod A-42-1-0-1700000000" }, "mod a-42-1-0-1700000000.7z"), reloaded.indexOf("A"));
+        QCOMPARE(reloaded.indexOfInstalled(ModEntry{ .name = "Mod A", .nexusModId = 42 }, "other.7z"), reloaded.indexOf("A"));
+        QCOMPARE(reloaded.indexOfInstalled(ModEntry{ .name = "Mod A" }, "other.7z"), -1);  // a different mod of that name
+        QCOMPARE(reloaded.indexOfInstalled(ModEntry{ .name = "Mod A", .nexusModId = 43 }, "Mod A-42-1-0-1700000000.7z"), -1);
         const int before = reloaded.indexOf("Manual");
         reloaded.moveRows({ before }, -before);
         QCOMPARE(reloaded.indexOf("Manual"), 0);

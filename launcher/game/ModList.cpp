@@ -153,6 +153,21 @@ int ModList::indexOf(const QString& id) const
     return -1;
 }
 
+int ModList::indexOfInstalled(const ModEntry& metadata, const QString& archiveName) const
+{
+    for (int i = 0; i < m_mods.size(); i++) {
+        const auto& existing = m_mods[i];
+        const bool sameName = existing.name.compare(metadata.name, Qt::CaseInsensitive) == 0 &&
+                              (metadata.nexusModId > 0 ? existing.nexusModId == metadata.nexusModId : existing.nexusModId <= 0);
+        const bool sameArchive = metadata.nexusModId <= 0 && !existing.archive.isEmpty() &&
+                                 existing.archive.compare(archiveName, Qt::CaseInsensitive) == 0;
+        if (sameName || sameArchive) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 QString ModList::uniqueId(const QString& name) const
 {
     auto base = FS::RemoveInvalidFilenameChars(name.trimmed()).trimmed();
