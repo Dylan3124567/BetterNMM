@@ -76,7 +76,7 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     m_enable = addAction(tr("&Enable"), tr("Enable the selected mods."), "status-good");
     m_disable = addAction(tr("&Disable"), tr("Disable the selected mods."), "status-bad");
     m_remove = addAction(tr("&Remove"), tr("Delete the selected mods."), "delete");
-    auto* separator = addAction(tr("Add Se&parator"), tr("Insert a heading above the selected mod that groups the mods below it. Click "
+    auto* separator = addAction(tr("Add Separa&tor"), tr("Insert a heading above the selected mod that groups the mods below it. Click "
                                                        "its arrow to hide or show them; double-click its name to rename it."));
     addSeparator();
     m_up = addAction(tr("Move &Up"), tr("Lower the priority of the selected mods."));
@@ -91,15 +91,15 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     addSeparator();
     auto* check = addAction(tr("Check for &Updates"), tr("Ask Nexus Mods for the newest version of every mod installed from it."), "refresh");
     m_update = addAction(tr("U&pdate"), tr("Install the newest file of the selected mods."));
-    m_ignoreUpdates = addAction(tr("&Ignore Updates"), tr("Stop pointing out newer versions of the selected mods, and leave them out of "
+    m_ignoreUpdates = addAction(tr("I&gnore Updates"), tr("Stop pointing out newer versions of the selected mods, and leave them out of "
                                                          "Update. Choose it again to stop ignoring them."));
     m_ignoreUpdates->setCheckable(true);
-    m_options = addAction(tr("Change Installer &Options..."), tr("Run the selected mod's installer again with the options it has now "
+    m_options = addAction(tr("C&hange Installer Options..."), tr("Run the selected mod's installer again with the options it has now "
                                                                  "picked, and install it anew with the ones you change."));
     m_nexusPage = addAction(tr("View on &Nexus"), tr("Open the selected mods' pages on Nexus Mods."));
     auto* folder = addAction(tr("View &Folder"), tr("Open the folder of the selected mod, or of all mods."), "viewfolder");
     auto* redeploy = addAction(tr("Re&deploy"), tr("Make the game folder match the enabled mods again."));
-    auto* conflicts = addAction(tr("Con&flicts..."), tr("See which mod wins each file the selected mods (or all enabled mods) "
+    auto* conflicts = addAction(tr("&Conflicts..."), tr("See which mod wins each file the selected mods (or all enabled mods) "
                                                        "share with others, and hide files you do not want deployed."));
     auto* changed = addAction(tr("Changed F&iles..."), tr("Mod files that xEdit or another tool replaced in the game folder: keep "
                                                          "the change with its mod, or put the mod's file back."));

@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <QHash>
 #include <QList>
 #include <QStringList>
 
@@ -31,6 +32,7 @@ namespace HealthCheck {
 
 enum class Kind {
     MissingMaster,          ///< an active plugin needs a plugin that is not there
+    MasterInDisabledMod,    ///< an active plugin needs a plugin that only a disabled mod has
     InactiveMaster,         ///< an active plugin needs a plugin that is there but not active
     MasterLoadsLater,       ///< an active plugin loads before a master it needs
     MissingRequirement,     ///< an enabled mod needs a Nexus Mods mod that is not installed
@@ -43,11 +45,11 @@ struct Problem {
     QString plugin;        ///< plugin problems: the active plugin
     QString master;        ///< plugin problems: the master it needs
     QStringList neededBy;  ///< requirement problems: names of the enabled mods that need it
-    QString requirement;   ///< requirement problems: the name Nexus Mods gives the required mod
+    QString requirement;   ///< requirement problems: the name Nexus Mods gives the required mod; MasterInDisabledMod: the mod's name
     QStringList notes;     ///< requirement problems: what the mod pages say about it
     int nexusModId = 0;    ///< requirement problems: the required mod on Nexus Mods, 0 when it is not there
     QString game;          ///< requirement problems: the Nexus Mods game domain
-    QString modId;         ///< DisabledRequirement: the installed mod to enable
+    QString modId;         ///< DisabledRequirement, MasterInDisabledMod: the installed mod to enable
 };
 
 /// The script extender of the game, for requirement problems
@@ -58,8 +60,8 @@ struct ScriptExtender {
 };
 
 /// Active plugins (implicit ones count as active) whose masters are not there, not active or load after them;
-/// @p plugins in load order
-QList<Problem> pluginProblems(const QList<PluginEntry>& plugins);
+/// @p plugins in load order. @p disabledMods has the plugins of disabled mods: lower-case file name -> {mod id, name}.
+QList<Problem> pluginProblems(const QList<PluginEntry>& plugins, const QHash<QString, std::pair<QString, QString>>& disabledMods = {});
 
 /**
  * Requirements of the enabled mods of @p mods that are not met, from @p details (what Nexus Mods says about the

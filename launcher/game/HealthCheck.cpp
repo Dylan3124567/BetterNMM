@@ -26,7 +26,7 @@
 
 namespace HealthCheck {
 
-QList<Problem> pluginProblems(const QList<PluginEntry>& plugins)
+QList<Problem> pluginProblems(const QList<PluginEntry>& plugins, const QHash<QString, std::pair<QString, QString>>& disabledMods)
 {
     QHash<QString, int> position;  // lower-case name -> load order index
     for (int i = 0; i < plugins.size(); i++) {
@@ -50,7 +50,13 @@ QList<Problem> pluginProblems(const QList<PluginEntry>& plugins)
             } else {
                 continue;
             }
-            out << Problem{ .kind = kind, .plugin = plugin.name, .master = found == position.cend() ? master : plugins[*found].name };
+            Problem problem{ .kind = kind, .plugin = plugin.name, .master = found == position.cend() ? master : plugins[*found].name };
+            if (const auto provider = disabledMods.constFind(master.toLower()); kind == Kind::MissingMaster && provider != disabledMods.cend()) {
+                problem.kind = Kind::MasterInDisabledMod;
+                problem.modId = provider->first;
+                problem.requirement = provider->second;
+            }
+            out << problem;
         }
     }
     return out;
@@ -144,6 +150,9 @@ QString describe(const Problem& problem)
     switch (problem.kind) {
         case Kind::MissingMaster:
             return QObject::tr("%1 needs %2, which is not installed: the game crashes while loading.").arg(problem.plugin, problem.master);
+        case Kind::MasterInDisabledMod:
+            return QObject::tr("%1 needs %2, which is in the disabled mod %3: the game crashes while loading.")
+                .arg(problem.plugin, problem.master, problem.requirement);
         case Kind::InactiveMaster:
             return QObject::tr("%1 needs %2, which is not active: the game crashes while loading.").arg(problem.plugin, problem.master);
         case Kind::MasterLoadsLater:
@@ -163,6 +172,8 @@ QString remedy(const Problem& problem)
     switch (problem.kind) {
         case Kind::MissingMaster:
             return QObject::tr("Deactivate %1, or install the mod that has %2").arg(problem.plugin, problem.master);
+        case Kind::MasterInDisabledMod:
+            return QObject::tr("Enable %1").arg(problem.requirement);
         case Kind::InactiveMaster:
             return QObject::tr("Activate %1").arg(problem.master);
         case Kind::MasterLoadsLater:

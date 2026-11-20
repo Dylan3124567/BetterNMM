@@ -146,8 +146,15 @@ isolated instance of the game installation Vortex manages, with:
      installs. Updates from the Mods page work the same way.
    - **Mod Manager Download** buttons on the website work once BetterNMM handles `nxm://` links
      (Settings > General > *Handle Nexus Mods download links*; BetterNMM also offers this the first time it is needed).
+   - Downloads run several at a time (Settings > Launcher > *Concurrent Download Limit*, 6 by default) and install one
+     after another as they finish. **Downloads** shows each one's progress and speed, with pause, resume and cancel. A
+     dropped or stalled connection picks up where it stopped, so does a download after BetterNMM restarts, and an
+     expired Nexus Mods address is renewed.
    - FOMOD installers (`fomod/ModuleConfig.xml`) open as a wizard. C# script installers can not run; BetterNMM asks before
      installing such an archive's files as they are.
+   - Nemesis is set up when it is installed: after a deploy it is pointed at the instance's Data folder, gets its cache
+     folder and language, has the patches other mods brought ticked, gets its engine updated when those change, and
+     gets a Launch entry whose output goes into the mod *Nemesis Output*.
    - While the game runs, mods still install (a download finishing mid-game): nothing pops up over the game, and the game
      folder is left alone until the game stops; then the new mods are deployed and their plugins switched on.
 4. **Mods page**: enable, disable, reorder (lower wins when two mods have the same file), check for updates, open on Nexus.
@@ -160,6 +167,19 @@ isolated instance of the game installation Vortex manages, with:
    Recycle Bin and puts the mod's file back. A mod file deleted from the game folder comes back with the next deploy.
    **Export List** saves the mods (order, on/off, version, Nexus Mods page) and the load order as Markdown, CSV or text,
    for a support thread or a guide.
+   **Add Separator** puts a heading above the selected mod that groups the mods below it; double-click to rename it,
+   click its arrow to fold its mods away. A folded group moves as a whole, Auto Sort sorts within each group, and
+   exports show the headings.
+   **Ignore Updates** stops pointing out newer versions of the selected mods (their *Latest* column says *ignored*) and
+   leaves them out of **Update**; choosing it again undoes it.
+   **Conflicts** (or a double-click on the *Conflicts* column) lists the files of the selected mods, or of every enabled
+   mod, with the mod whose copy the game gets and the other mods that have the file. **Hide** takes a file out of the
+   game folder while leaving it in its mod (renamed to *name*.mohidden), so the next mod with it wins; **Show** brings it
+   back. Hidden files stay hidden when their mod is reinstalled or updated.
+   **Change Installer Options** runs the selected mod's FOMOD installer again with the options it has now already
+   picked (those you chose, or for an older install the ones its files show) and installs it anew with your changes, in
+   the same place in the list. **Check Patches** finds compatibility patches the installers of your mods offer for the
+   other mods you have, and adds the ones you tick.
    **Auto Sort** orders everything in one click:
    - Plugins (Skyrim Special Edition, Skyrim, Fallout 4, Fallout: New Vegas, Fallout 3, Oblivion, Starfield) are sorted
      the way LOOT 0.29 sorts them: BetterNMM carries its own port of LOOT's sorter (masters, LOOT's masterlist groups,
@@ -176,9 +196,19 @@ isolated instance of the game installation Vortex manages, with:
    needs, since the game crashes while loading it. The top line counts the plugin slots in use: Skyrim Special Edition
    and Fallout 4 load at most 254 full plugins plus 4096 light (ESL) ones; Skyrim, Oblivion, Fallout 3 and New Vegas 255
    plugins in all. Too many shows in red.
+   **Health page**: what keeps the mods from working, each with a fix. Active plugins whose masters are missing (or
+   only in a disabled mod), inactive, or load after them; and, after **Check** asks Nexus Mods, enabled mods whose
+   requirements are not installed, are disabled, or (the script extender) are not in the game folder. **Fix** does what
+   the *Fix* column says: activate, deactivate or move plugins, enable mods, or install the requirement from Nexus
+   Mods. **Find on Nexus** opens a requirement's page or searches for a missing master.
 6. **Launch** starts the game, the script extender when one is installed, or a tool (Settings > Tools: xEdit, LOOT,
    BodySlide, ...). Tools see the instance's game folder, load order and profile exactly like the game; a tool inside
    the game folder is kept as a path relative to it, so copies and exports of the instance use their own copy.
+   A tool with an *Output mod* (Settings > Tools; a tool you add gets *Name Output*) has the files it writes into the
+   game folder moved into that mod once it exits, also when it crashed or was killed: generated meshes, patches and
+   plugins become a mod you can disable, reorder or remove. The mod is made at the end of the list the first time and
+   switched on when needed. Logs, crash dumps and the tool's own folder are left alone; a mod's file the tool wrote
+   into is copied into the output mod (the log names it), and game files it changed stay where they are.
    **Kill** ends the game without marking the instance as crashed. Starting the game (not a tool: xEdit or LOOT are how
    such a load order gets fixed) with an active plugin whose masters do not load, or with more plugins than the game
    has slots for, first lists the problems; **Launch Anyway** goes on, Cancel (the default) does not.

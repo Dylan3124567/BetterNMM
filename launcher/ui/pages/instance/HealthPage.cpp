@@ -18,6 +18,7 @@
 
 #include "HealthPage.h"
 
+#include <QDir>
 #include <QFileInfo>
 #include <QHeaderView>
 #include <QMap>
@@ -89,8 +90,22 @@ void HealthPage::check(bool askNexus)
 
     m_problems.clear();
     if (m_instance->definition().hasPlugins()) {
+        // a master no enabled mod has may be in a disabled one
+        QHash<QString, std::pair<QString, QString>> disabled;
+        const auto dataPath = m_instance->definition().dataPath;
+        for (const auto& mod : mods->mods()) {
+            if (mod.enabled || mod.separator) {
+                continue;
+            }
+            const auto dir = dataPath.isEmpty() ? mods->modDir(mod.id) : FS::PathCombine(mods->modDir(mod.id), dataPath);
+            for (const auto& name : QDir(dir).entryList({ "*.esp", "*.esm", "*.esl" }, QDir::Files)) {
+                if (!disabled.contains(name.toLower())) {
+                    disabled.insert(name.toLower(), { mod.id, mod.name });
+                }
+            }
+        }
         if (auto* plugins = m_instance->pluginList(); plugins->refresh()) {
-            m_problems << HealthCheck::pluginProblems(plugins->plugins());
+            m_problems << HealthCheck::pluginProblems(plugins->plugins(), disabled);
         }
     }
     const auto& game = m_instance->definition();
@@ -188,7 +203,10 @@ void HealthPage::fixSelected()
                 }
                 break;
             case Kind::DisabledRequirement:
-                enable << mods->indexOf(problem.modId);
+            case Kind::MasterInDisabledMod:
+                if (const int row = mods->indexOf(problem.modId); !enable.contains(row)) {
+                    enable << row;
+                }
                 break;
             case Kind::MissingScriptExtender:
                 extender = true;
@@ -200,8 +218,11 @@ void HealthPage::fixSelected()
     }
     plugins->setActive(activate, true);
     plugins->setActive(deactivate, false);
-    // enabling deploys, as it does on the Mods page
-    mods->setEnabled(enable, true);
+    if (!enable.isEmpty()) {
+        // deployed before the check below, so the plugins the mods bring are there for it
+        mods->setEnabled(enable, true);
+        ModInstallFlow::deploy(m_instance, this);
+    }
     if (extender) {
         ModInstallFlow::installScriptExtender(m_instance, this);
     }

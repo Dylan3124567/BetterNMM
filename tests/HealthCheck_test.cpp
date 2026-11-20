@@ -73,6 +73,16 @@ class HealthCheckTest : public QObject {
             QVERIFY(HealthCheck::describe(problem).contains(problem.plugin));
             QVERIFY(HealthCheck::remedy(problem).contains(problem.master));
         }
+
+        // a missing master that a disabled mod has: enabling that mod is the fix
+        const auto withDisabled = HealthCheck::pluginProblems(plugins, { { "missing.esm", { "M", "Masters mod" } } });
+        QCOMPARE(withDisabled.size(), 3);
+        QCOMPARE(withDisabled[0].kind, Kind::MasterInDisabledMod);
+        QCOMPARE(withDisabled[0].modId, QString("M"));
+        QVERIFY(HealthCheck::describe(withDisabled[0]).contains("Masters mod"));
+        QCOMPARE(HealthCheck::remedy(withDisabled[0]), QString("Enable Masters mod"));
+        // only a missing one: an inactive master is there already
+        QCOMPARE(HealthCheck::pluginProblems(plugins, { { "off.esp", { "O", "Off mod" } } })[1].kind, Kind::InactiveMaster);
     }
 
     void test_requirements()
