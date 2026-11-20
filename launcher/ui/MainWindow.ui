@@ -51,6 +51,7 @@
    </attribute>
    <addaction name="actionAddInstance"/>
    <addaction name="separator"/>
+   <addaction name="actionDownloads"/>
    <addaction name="actionFoldersButton"/>
    <addaction name="actionSettings"/>
    <addaction name="actionHelpButton"/>
@@ -503,6 +504,17 @@
    </property>
    <property name="toolTip">
     <string>Open the launcher's root folder in a file browser.</string>
+   </property>
+  </action>
+  <action name="actionDownloads">
+   <property name="icon">
+    <iconset theme="centralmods"/>
+   </property>
+   <property name="text">
+    <string>Do&amp;wnloads</string>
+   </property>
+   <property name="toolTip">
+    <string>Mod downloads in progress: pause, resume or cancel them.</string>
    </property>
   </action>
   <action name="actionViewDownloadsFolder">

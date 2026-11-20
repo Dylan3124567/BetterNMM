@@ -18,8 +18,12 @@
 
 #include <QDirListing>
 #include <QFile>
+#include <QMutex>
 #include <QTemporaryDir>
 #include <QTest>
+
+#include <archive.h>
+#include <archive_entry.h>
 
 #include <FileSystem.h>
 #include <archive/ArchiveWriter.h>
@@ -56,6 +60,47 @@ void makeArchive(const QString& path, const QByteArray& config, const QList<QPai
         QVERIFY(writer.addFile(name, content).has_value());
     }
     QVERIFY(writer.close().has_value());
+}
+
+/// The archive as a solid 7z, all files in one compressed stream behind the installer, with a large file at the end and
+/// garbage over the middle of the stream: unpacking past the small files fails
+void makeDamagedSolid7z(const QString& path, const QByteArray& config, const QList<QPair<QString, QByteArray>>& files)
+{
+    QByteArray filler;
+    for (int i = 0; filler.size() < (4 << 20); i++) {
+        filler += QByteArray::number(i * 7919 % 100003) + " filler line\n";
+    }
+    auto* a = archive_write_new();
+    QVERIFY(archive_write_set_format_7zip(a) == ARCHIVE_OK);
+    QVERIFY(archive_write_set_format_option(a, "7zip", "compression", "deflate") == ARCHIVE_OK);
+    QVERIFY(archive_write_open_filename_w(a, path.toStdWString().c_str()) == ARCHIVE_OK);
+    const auto add = [a](const QString& name, const QByteArray& data) {
+        auto* entry = archive_entry_new();
+        archive_entry_copy_pathname_w(entry, name.toStdWString().c_str());
+        archive_entry_set_filetype(entry, AE_IFREG);
+        archive_entry_set_perm(entry, 0644);
+        archive_entry_set_size(entry, data.size());
+        QCOMPARE(archive_write_header(a, entry), ARCHIVE_OK);
+        QCOMPARE(archive_write_data(a, data.constData(), data.size()), data.size());
+        archive_entry_free(entry);
+    };
+    add("Lights/fomod/ModuleConfig.xml", config);
+    for (const auto& [name, content] : files) {
+        add(name, content);
+    }
+    add("Lights/textures/filler.dds", filler);
+    QCOMPARE(archive_write_close(a), ARCHIVE_OK);
+    archive_write_free(a);
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadWrite));
+    const auto size = file.size();
+    QByteArray garbage(size / 8, '\0');
+    for (int i = 0; i < garbage.size(); i++) {
+        garbage[i] = static_cast<char>(i * 131 + 17);
+    }
+    QVERIFY(file.seek(size / 2));
+    QCOMPARE(file.write(garbage), garbage.size());
 }
 
 void writeFile(const QString& path, const QByteArray& content)
@@ -204,6 +249,74 @@ class FomodPatchesTest : public QObject {
         QVERIFY(file.setFileTime(time.addSecs(60), QFileDevice::FileModificationTime));
         file.close();
         QCOMPARE(FomodPatches::find({ copy }, states, cache).errors.size(), 1);
+    }
+
+    void test_solid_archive_unpacked_only_up_to_what_is_needed()
+    {
+        // 7-Zip often puts the installer at the start of a solid stream gigabytes long
+        QTemporaryDir dir;
+        auto solid = m_mod;
+        solid.archive = FS::PathCombine(dir.path(), "Lights.7z");
+        makeDamagedSolid7z(solid.archive, g_lights, g_files);
+        const auto unpackAll = MMCZip::ArchiveReader(solid.archive).parse([](MMCZip::ArchiveReader::File* f) -> Result<> {
+            TRY(f->readAll());
+            return {};
+        });
+        QVERIFY(!unpackAll.has_value());
+
+        const auto states = plugins(g_others);
+        const auto check = FomodPatches::find({ solid }, states, {});
+        QVERIFY2(check.errors.isEmpty(), qPrintable(check.errors.join('\n')));
+        QCOMPARE(titles(check.patches), titles(FomodPatches::find({ m_mod }, states, {}).patches));
+        // adding patches stops after the last file they need
+        const auto installed = FomodPatches::install(solid, check.patches, states, {});
+        QVERIFY2(installed.has_value(), qPrintable(installed ? QString() : installed.error()));
+        QCOMPARE(readFile(FS::PathCombine(solid.folder, "Lights - Water.esp")), content("Lights/Patches/Water.esp"));
+        QCOMPARE(readFile(FS::PathCombine(solid.folder, "textures/lamp.dds")), content("Lights/Patches/Citizens/textures/lamp.dds"));
+    }
+
+    void test_unpacked_7z_remembered_for_the_check()
+    {
+        // installing unpacked the whole archive already; the check takes its installer from there
+        QTemporaryDir dir;
+        auto solid = m_mod;
+        solid.archive = FS::PathCombine(dir.path(), "Lights.7z");
+        makeDamagedSolid7z(solid.archive, g_lights, g_files);
+        const auto unpacked = FS::PathCombine(dir.path(), "unpacked");
+        writeFile(FS::PathCombine(unpacked, "Lights/fomod/ModuleConfig.xml"), g_lights);
+        const auto cache = FS::PathCombine(dir.path(), "cache");
+        FomodPatches::remember(solid.archive, unpacked, cache);
+
+        // garbage in the archive's place (same size and time) goes unnoticed: the check never opens it
+        QFile file(solid.archive);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        const auto time = file.fileTime(QFileDevice::FileModificationTime);
+        file.write(QByteArray(file.size(), 'x'));
+        QVERIFY(file.setFileTime(time, QFileDevice::FileModificationTime));
+        file.close();
+        const auto states = plugins(g_others);
+        const auto check = FomodPatches::find({ solid }, states, cache);
+        QVERIFY2(check.errors.isEmpty(), qPrintable(check.errors.join('\n')));
+        QCOMPARE(titles(check.patches), titles(FomodPatches::find({ m_mod }, states, {}).patches));
+
+        // a zip is listed quickly by the check itself
+        const auto zipCache = FS::PathCombine(dir.path(), "zip-cache");
+        FomodPatches::remember(m_mod.archive, unpacked, zipCache);
+        QVERIFY(!QFileInfo::exists(zipCache));
+    }
+
+    void test_progress_counts_every_mod()
+    {
+        auto gone = m_mod;
+        gone.archive = FS::PathCombine(m_dir.path(), "gone.zip");
+        QMutex mutex;
+        QList<QPair<int, int>> calls;
+        FomodPatches::find({ m_mod, gone, m_mod }, plugins(g_others), {}, [&](int done, int total) {
+            QMutexLocker lock(&mutex);
+            calls << qMakePair(done, total);
+        });
+        std::sort(calls.begin(), calls.end());
+        QCOMPARE(calls, (QList<QPair<int, int>>{ { 1, 3 }, { 2, 3 }, { 3, 3 } }));
     }
 
     void test_install_adds_patches_and_replaces_options()

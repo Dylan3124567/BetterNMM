@@ -42,6 +42,9 @@
 
 #include "Application.h"
 #include "ui/dialogs/NexusDownloadQueue.h"
+#include "net/DownloadManager.h"
+#include "ui/dialogs/DownloadsDialog.h"
+#include "ui/dialogs/ModInstallFlow.h"
 #include "BuildConfig.h"
 
 #include "tasks/Task.h"
@@ -878,6 +881,9 @@ void Application::performMainStartupAction()
         qDebug() << "<> Main window shown.";
     }
 
+    // downloads BetterNMM was in the middle of when it closed continue
+    downloads()->restore();
+
     {  // delete instances tmp dirctory
         auto instDir = m_settings->get("InstanceDir").toString();
         const QString tempRoot = FS::PathCombine(instDir, ".tmp");
@@ -915,6 +921,9 @@ void Application::showFatalErrorMessage(const QString& title, const QString& con
 
 Application::~Application()
 {
+    // its transfers belong to the network manager, which goes before the children of this object
+    delete m_downloads;
+    m_downloads = nullptr;
     // Shut down logger by setting the logger function to nothing
     qInstallMessageHandler(nullptr);
 }
@@ -1224,6 +1233,32 @@ HttpMetaCache* Application::metacache()
     return m_metacache.get();
 }
 
+DownloadManager* Application::downloads()
+{
+    if (!m_downloads) {
+        m_downloads = new DownloadManager(FS::PathCombine(m_dataPath, "downloads.json"), network(), this);
+        m_downloads->setUserAgent(getUserAgent());
+        m_downloads->setMaxRunning(m_settings->get("NumberOfConcurrentDownloads").toInt());
+        m_downloads->setLinkRefresher(&ModInstallFlow::refreshNexusLink);
+        connect(m_downloads, &DownloadManager::added, this, [this] { showDownloads(); });
+        connect(m_downloads, &DownloadManager::completed, this, [this](const QString& id) {
+            if (const auto* item = m_downloads->item(id); item && !item->instanceId.isEmpty()) {
+                ModInstallFlow::queueInstall(item->instanceId, item->target, item->metadata);
+            }
+        });
+    }
+    return m_downloads;
+}
+
+void Application::showDownloads()
+{
+    if (!m_downloadsDialog) {
+        m_downloadsDialog = new DownloadsDialog(downloads(), m_mainWindow);
+    }
+    m_downloadsDialog->show();
+    m_downloadsDialog->raise();
+}
+
 NexusDownloadQueue* Application::nexusDownloads()
 {
     if (!m_nexusDownloads) {
@@ -1234,7 +1269,8 @@ NexusDownloadQueue* Application::nexusDownloads()
 #endif
         // the window keeps its Nexus Mods login in the data folder, next to the instances it downloads for
         m_nexusDownloads = new NexusDownloadQueue(FS::PathCombine(applicationDirPath(), "browser", program), FS::PathCombine(m_dataPath, "browser"),
-                                                  network(), this);
+                                                  downloads(), this);
+        connect(m_nexusDownloads, &NexusDownloadQueue::closed, this, [] { ModInstallFlow::installQueuedDownloads(); });
     }
     return m_nexusDownloads;
 }

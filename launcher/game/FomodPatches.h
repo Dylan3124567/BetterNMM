@@ -67,9 +67,17 @@ using FileStates = std::function<Fomod::FileState(const QString&)>;
 /**
  * Reads the installer of every mod in @p mods, several archives at once. What an archive holds is kept in @p cacheDir
  * (nowhere when empty), so only new or changed archives are read again. Runs on worker threads: @p fileState is called
- * from several at once and must not touch live models.
+ * from several at once and must not touch live models, and so is @p progress, when set, with how many of how many mods
+ * are done.
  */
-Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& cacheDir);
+Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& cacheDir, const std::function<void(int, int)>& progress = {});
+
+/**
+ * Keeps in @p cacheDir what find() needs of a 7z @p archive, taking its installer from @p extractedDir where the archive
+ * was just unpacked, so find() does not unpack it again up to the installer. Does nothing for other archives: find()
+ * reads them no slower than this would.
+ */
+void remember(const QString& archive, const QString& extractedDir, const QString& cacheDir);
 
 struct Installed {
     QList<QStringList> choices;  ///< the mod's installer options now, for Mod::choices

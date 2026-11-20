@@ -37,6 +37,7 @@
 #include <game/Deployer.h>
 #include <game/GameInstance.h>
 #include <game/ModList.h>
+#include <net/DownloadManager.h>
 #include <settings/INISettingsObject.h>
 #include <ui/dialogs/ModInstallFlow.h>
 #include <ui/dialogs/NexusDownloadQueue.h>
@@ -187,6 +188,7 @@ class NexusDownloadQueueTest : public QObject {
     std::unique_ptr<INISettingsObject> m_global;
     std::unique_ptr<GameInstance> m_instance;
     QNetworkAccessManager m_network;
+    std::unique_ptr<DownloadManager> m_downloads;
 
     NexusDownloadQueue::Request request(const QString& title, const QUrl& page, int modId)
     {
@@ -232,21 +234,28 @@ class NexusDownloadQueueTest : public QObject {
         m_instance->settings()->set("InstanceKind", "Main");
         m_instance->settings()->set("SourceGameDir", steam);
         QVERIFY(m_instance->modList()->load().has_value());
+        // what BetterNMM itself does with a finished download (one at a time, outside other dialogs) is not under test here
+        m_downloads = std::make_unique<DownloadManager>(QString(), &m_network);
+        m_downloads->setRetryDelays({});
+        connect(m_downloads.get(), &DownloadManager::completed, this, [this](const QString& id) {
+            const auto* item = m_downloads->item(id);
+            QVERIFY(ModInstallFlow::installArchive(m_instance.get(), item->target, item->metadata, nullptr));
+        });
     }
 
     void test_clicked_files_download_and_install()
     {
         const auto source = makeArchive(FS::PathCombine(m_dir.path(), "source/ModA.zip"), "ModA.esp");
         QVERIFY(!source.isEmpty());
-        NexusDownloadQueue queue(FAKE_BROWSER_EXE, FS::PathCombine(m_dir.path(), "profile"), &m_network);
+        NexusDownloadQueue queue(FAKE_BROWSER_EXE, FS::PathCombine(m_dir.path(), "profile"), m_downloads.get());
         QVERIFY(queue.isAvailable());
         QVERIFY(finish(queue, { request("Mod A", QUrl::fromLocalFile(source), 1), request("skip Mod B", QUrl::fromLocalFile(source), 2) }));
 
         // the link the window reported downloaded into the downloads folder under the file's name on Nexus Mods
+        const auto& mods = m_instance->modList()->mods();
+        QTRY_COMPARE_WITH_TIMEOUT(mods.size(), 1, 30000);
         QVERIFY(QFileInfo::exists(FS::PathCombine(m_dir.path(), "downloads/Mod A.zip")));
         QVERIFY(!QFileInfo::exists(FS::PathCombine(m_dir.path(), "downloads/skip Mod B.zip")));
-        const auto& mods = m_instance->modList()->mods();
-        QCOMPARE(mods.size(), 1);
         QCOMPARE(mods.first().name, QString("Mod A"));
         QCOMPARE(mods.first().nexusModId, 1);
         QCOMPARE(mods.first().nexusFileId, 10);
@@ -388,15 +397,26 @@ class NexusDownloadQueueTest : public QObject {
     void test_problems_are_reported()
     {
         const auto missing = QUrl::fromLocalFile(FS::PathCombine(m_dir.path(), "source/missing.zip"));
-        NexusDownloadQueue queue(FAKE_BROWSER_EXE, FS::PathCombine(m_dir.path(), "profile"), &m_network);
+        NexusDownloadQueue queue(FAKE_BROWSER_EXE, FS::PathCombine(m_dir.path(), "profile"), m_downloads.get());
         QVERIFY(finish(queue, { request("timeout Mod C", missing, 3), request("Mod D", missing, 4), request("ignore Mod E", missing, 5) }));
         const auto messages = takeMessages();
         QCOMPARE(messages.size(), 1);
         const auto& text = messages.first();
         QVERIFY2(text.contains("timeout Mod C: Nexus Mods did not start the download"), qPrintable(text));
-        QVERIFY2(text.contains("Mod D: "), qPrintable(text));  // the download itself failed
         QVERIFY2(text.contains("ignore Mod E: BetterNMM's Nexus Mods window did not take this file"), qPrintable(text));
-        QVERIFY(!QFileInfo::exists(FS::PathCombine(m_dir.path(), "downloads/Mod D.zip")));
+        // the download itself failed: the download list says so, with the reason, where it can be resumed
+        const auto target = FS::PathCombine(m_dir.path(), "downloads/Mod D.zip");
+        const DownloadItem* failed = nullptr;
+        QTRY_VERIFY_WITH_TIMEOUT([&] {
+            for (const auto& item : m_downloads->items()) {
+                if (item.target == target && item.state == DownloadItem::State::Failed) {
+                    failed = m_downloads->item(item.id);
+                }
+            }
+            return failed != nullptr;
+        }(), 30000);
+        QVERIFY(!failed->error.isEmpty());
+        QVERIFY(!QFileInfo::exists(target));
         QCOMPARE(m_instance->modList()->mods().size(), 1);
     }
 
@@ -410,7 +430,7 @@ class NexusDownloadQueueTest : public QObject {
         MockNexus nexus(archive.readAll());
         // off screen and without taking the focus from whoever is using the computer during the test
         qputenv("BETTERNMM_BROWSER_OFFSCREEN", "1");
-        NexusDownloadQueue queue(BROWSER_EXE, FS::PathCombine(m_dir.path(), "browser-profile"), &m_network);
+        NexusDownloadQueue queue(BROWSER_EXE, FS::PathCombine(m_dir.path(), "browser-profile"), m_downloads.get());
         QSignalSpy finished(&queue, &NexusDownloadQueue::finished);
         auto first = request("Window Mod 1", nexus.page(101), 101);
         auto second = request("Window Mod 2", nexus.page(102), 102);
@@ -428,10 +448,14 @@ class NexusDownloadQueueTest : public QObject {
         QVERIFY(finished.wait(60000));
 
         QStringList names;
-        for (const auto& mod : m_instance->modList()->mods()) {
-            names << mod.name;
-        }
-        QVERIFY2(names.contains("Window Mod 1") && names.contains("Window Mod 2"), qPrintable(names.join(", ")));
+        const auto installed = [&] {
+            names.clear();
+            for (const auto& mod : m_instance->modList()->mods()) {
+                names << mod.name;
+            }
+            return names.contains("Window Mod 1") && names.contains("Window Mod 2");
+        };
+        QTRY_VERIFY2_WITH_TIMEOUT(installed(), qPrintable(names.join(", ")), 30000);
         QVERIFY2(takeMessages().isEmpty(), "nothing went wrong");
         QTRY_VERIFY_WITH_TIMEOUT(browserWindow() == nullptr, 10000);  // the window closed by itself
 #else
@@ -441,7 +465,7 @@ class NexusDownloadQueueTest : public QObject {
 
     void test_missing_window()
     {
-        NexusDownloadQueue queue(FS::PathCombine(m_dir.path(), "no-browser/betternmm-browser.exe"), FS::PathCombine(m_dir.path(), "profile"), &m_network);
+        NexusDownloadQueue queue(FS::PathCombine(m_dir.path(), "no-browser/betternmm-browser.exe"), FS::PathCombine(m_dir.path(), "profile"), m_downloads.get());
         QVERIFY(!queue.isAvailable());
         QVERIFY(finish(queue, { request("Mod F", QUrl("https://www.nexusmods.com/testgame/mods/6"), 6) }));
         const auto messages = takeMessages();

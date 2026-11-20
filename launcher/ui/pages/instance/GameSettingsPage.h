@@ -36,6 +36,11 @@ class GameSettingsPage : public GameSettingsWidget, public BasePage {
     QString helpPage() const override { return "Instance-settings"; }
     bool apply() override
     {
+        // a page not on screen holds the values from when it was last opened, and leaving it saved them: saving again
+        // would undo what changed since (the Launch entry BetterNMM adds for Nemesis, the launch is saving everything)
+        if (!isOpened) {
+            return true;
+        }
         if (!confirmIniChanges()) {
             return false;  // keeps the window open with the edits
         }

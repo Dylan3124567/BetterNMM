@@ -1111,6 +1111,11 @@ void MainWindow::on_actionAbout_triggered()
     dialog.exec();
 }
 
+void MainWindow::on_actionDownloads_triggered()
+{
+    APPLICATION->showDownloads();
+}
+
 void MainWindow::on_actionCheckUpdates_triggered()
 {
     SelfUpdate::check(this, false);

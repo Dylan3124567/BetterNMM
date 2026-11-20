@@ -26,14 +26,13 @@
 #include <QMessageBox>
 
 #include "FileSystem.h"
-#include "net/Request.h"
+#include "net/DownloadManager.h"
 #include "nexus/NxmLink.h"
 #include "ui/dialogs/CustomMessageBox.h"
 #include "ui/dialogs/ModInstallFlow.h"
-#include "ui/dialogs/ProgressDialog.h"
 
-NexusDownloadQueue::NexusDownloadQueue(QString program, QString profile, QNetworkAccessManager* network, QObject* parent)
-    : QObject(parent), m_program(std::move(program)), m_profile(std::move(profile)), m_network(network)
+NexusDownloadQueue::NexusDownloadQueue(QString program, QString profile, DownloadManager* downloads, QObject* parent)
+    : QObject(parent), m_program(std::move(program)), m_profile(std::move(profile)), m_downloads(downloads)
 {}
 
 NexusDownloadQueue::~NexusDownloadQueue()
@@ -198,33 +197,17 @@ void NexusDownloadQueue::download(Item& item, const QUrl& url, const QString& su
         name = QString("nexus-file-%1").arg(item.request.metadata.nexusFileId);
     }
     item.archive = FS::PathCombine(item.request.downloadDir, name);
-    if (item.request.size > 0 && QFileInfo(item.archive).size() == item.request.size) {
-        item.state = Item::State::Downloaded;  // downloaded before, complete
-        return;
-    }
-    if (!FS::ensureFolderPathExists(item.request.downloadDir)) {
-        item.state = Item::State::Failed;
-        item.error = tr("Could not create %1.").arg(QDir::toNativeSeparators(item.request.downloadDir));
-        return;
-    }
-    item.download = makeShared<NetJob>(tr("Downloading %1").arg(name), m_network);
-    item.download->addNetAction(Net::Request::makeFile(url, item.archive));
-    item.download->setAskRetry(false);
-    item.state = Item::State::Downloading;
-    connect(item.download.get(), &Task::finished, this, [this, id = QString::number(item.id)] {
-        auto* done = this->item(id);
-        if (!done || done->state != Item::State::Downloading) {
-            return;
-        }
-        if (done->download->wasSuccessful()) {
-            done->state = Item::State::Downloaded;
-        } else {
-            done->state = Item::State::Failed;
-            done->error = done->download->failReason();
-            QFile::remove(done->archive);
-        }
-    });
-    item.download->start();
+    // handed on: the download runs beside the others (a complete earlier one is used as it is) and installs once this
+    // window has closed
+    item.state = Item::State::Downloaded;
+    const auto* instance = item.request.instance.data();
+    DownloadItem download;
+    download.url = url;
+    download.target = item.archive;
+    download.size = item.request.size;
+    download.instanceId = instance ? instance->id() : QString();
+    download.metadata = item.request.metadata;
+    m_downloads->add(download);
 }
 
 void NexusDownloadQueue::windowClosed()
@@ -265,24 +248,12 @@ void NexusDownloadQueue::installAll()
         return;
     }
     m_installing = true;
-    // files still downloading: their progress, then everything installs in the order it was queued
-    for (auto& item : m_items) {
-        if (item.state == Item::State::Downloading && item.download && !item.download->isFinished()) {
-            ProgressDialog progress(m_parent);
-            progress.execWithTask(item.download.get());
-        }
-    }
     QStringList problems;
     for (auto& item : m_items) {
         auto* instance = item.request.instance.data();
         switch (item.state) {
             case Item::State::Downloaded:
-                if (!instance) {
-                    problems << tr("%1: its instance was deleted; the file is in %2").arg(item.request.title, QDir::toNativeSeparators(item.archive));
-                } else {
-                    ModInstallFlow::installArchive(instance, item.archive, item.request.metadata, m_parent);  // reports its own problems
-                }
-                break;
+                break;  // the download list has it, and installs it when it is complete
             case Item::State::Link:
                 if (const auto link = NxmLink::parse(QUrl(item.nxm)); link && instance) {
                     ModInstallFlow::installNexusFile(instance, *link, m_parent);
@@ -306,6 +277,7 @@ void NexusDownloadQueue::installAll()
     if (!problems.isEmpty()) {
         CustomMessageBox::selectable(m_parent, tr("Some Nexus Mods downloads did not finish"), problems.join("\n\n"), QMessageBox::Warning)->show();
     }
+    emit closed();
     if (std::any_of(m_items.begin(), m_items.end(), [](const Item& item) { return item.state == Item::State::Waiting; })) {
         startWindow();  // queued while installing
     } else if (m_items.isEmpty()) {

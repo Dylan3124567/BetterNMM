@@ -34,6 +34,7 @@
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QPointer>
+#include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSet>
@@ -57,8 +58,10 @@
 #include "game/GameFiles.h"
 #include "game/GameInstance.h"
 #include "game/ModInstaller.h"
+#include "game/Nemesis.h"
 #include "game/PluginList.h"
 #include "net/ApiRequest.h"
+#include "net/DownloadManager.h"
 #include "net/NetJob.h"
 #include "nexus/NexusAccount.h"
 #include "nexus/NexusApi.h"
@@ -69,6 +72,8 @@
 #include "ui/dialogs/FomodDialog.h"
 #include "ui/dialogs/NexusDownloadQueue.h"
 #include "ui/dialogs/ProgressDialog.h"
+#include "ui/InstanceWindow.h"
+#include "ui/MainWindow.h"
 
 namespace ModInstallFlow {
 
@@ -121,6 +126,12 @@ QSet<QString> pluginsIn(const QString& stagedMod)
         }
     }
     return out;
+}
+
+/// Where Check Patches keeps what it read from archives
+QString patchCache()
+{
+    return FS::PathCombine(APPLICATION->dataRoot(), "cache", "fomod");
 }
 
 /// The state of plugin files in the game for FOMOD conditions, taken now so it can be asked on a worker thread
@@ -194,6 +205,8 @@ void deployAfterExit(GameInstance* instance, const QSet<QString>& plugins, QWidg
 }
 
 /// Nexus file names look like "Name-1234-1-0-1700000000.7z"; drop the id, version and timestamp
+void setUpNemesis(GameInstance* instance, QWidget* parent);
+
 QString nameFromArchive(const QString& archive, int modId)
 {
     auto base = QFileInfo(archive).completeBaseName();
@@ -283,6 +296,34 @@ QString downloadTarget(GameInstance* instance, const QString& fileName)
 
 namespace {
 
+/// Nexus Mods lookups on their way (a file's details and download address), kept alive until they finish
+QList<NetJob::Ptr> g_lookups;
+
+void startLookup(const NetJob::Ptr& job, std::function<void()> done)
+{
+    g_lookups << job;
+    QObject::connect(job.get(), &Task::finished, APPLICATION, [raw = job.get(), done = std::move(done)] {
+        done();
+        // dropped after its signal, never inside it
+        QTimer::singleShot(0, APPLICATION, [raw] { g_lookups.removeIf([raw](const NetJob::Ptr& kept) { return kept.get() == raw; }); });
+    });
+    job->start();
+}
+
+QWidget* dialogParent(QWidget* preferred)
+{
+    return preferred ? preferred : static_cast<QWidget*>(APPLICATION->mainWindow());
+}
+
+/// Downloads waiting for their turn to install, in the order they finished
+struct PendingInstall {
+    QString instanceId;
+    QString archive;
+    ModEntry metadata;
+};
+QList<PendingInstall> g_installs;
+bool g_installing = false;
+
 bool downloadAndInstall(GameInstance* instance, const QString& game, int modId, int fileId, const QString& key, qint64 expires, QWidget* parent)
 {
     if (APPLICATION->accounts()->apiKey().isEmpty()) {
@@ -305,7 +346,8 @@ bool downloadAndInstall(GameInstance* instance, const QString& game, int modId, 
         return true;
     }
 
-    // mod details, the file's details and the download location in one go
+    // the mod's details, the file's details and the download address are asked for in the background, so more links can
+    // be clicked meanwhile; the download starts as soon as they arrive and installs when it is complete
     auto job = makeShared<NetJob>(QObject::tr("Nexus Mods file %1").arg(fileId), APPLICATION->network());
     auto [infoRequest, info] = Net::ApiRequest::makeByteArray(Nexus::apiUrl(QString("games/%1/mods/%2.json").arg(game).arg(modId)));
     auto [filesRequest, files] = Net::ApiRequest::makeByteArray(Nexus::apiUrl(QString("games/%1/mods/%2/files.json").arg(game).arg(modId)));
@@ -314,60 +356,71 @@ bool downloadAndInstall(GameInstance* instance, const QString& game, int modId, 
     job->addNetAction(filesRequest);
     job->addNetAction(linkRequest);
     job->setAskRetry(false);
-    {
-        ProgressDialog dialog(parent);
-        dialog.execWithTask(job.get());
-    }
-    for (const auto& request : { linkRequest, infoRequest, filesRequest }) {
-        if (request->wasSuccessful()) {
-            continue;
+    QPointer<QWidget> owner(parent);
+    startLookup(job, [infoRequest, filesRequest, linkRequest, info, files, links, owner, instanceId = instance->id(), game, modId, fileId, key, expires] {
+        const auto title = QObject::tr("Nexus Mods download failed");
+        auto* target = APPLICATION->instances()->getInstanceById(instanceId);
+        if (!target) {
+            return;
         }
-        const int status = request->replyStatusCode();
-        showError(parent, QObject::tr("Nexus Mods download failed"),
-                  status > 0 ? Nexus::errorMessage(status, {}) : request->failReason());
-        return false;
-    }
-
-    const auto modInfo = Nexus::parseModInfo(*info);
-    const auto fileList = Nexus::parseModFiles(*files);
-    const auto linkList = Nexus::parseDownloadLinks(*links);
-    if (!linkList) {
-        showError(parent, QObject::tr("Nexus Mods download failed"), linkList.error());
-        return false;
-    }
-    Nexus::ModFile file;
-    if (fileList) {
-        for (const auto& candidate : *fileList) {
-            if (candidate.fileId == fileId) {
-                file = candidate;
+        for (const auto& request : { linkRequest, infoRequest, filesRequest }) {
+            if (request->wasSuccessful()) {
+                continue;
+            }
+            const int status = request->replyStatusCode();
+            CustomMessageBox::selectable(dialogParent(owner), title, status > 0 ? Nexus::errorMessage(status, {}) : request->failReason(),
+                                         QMessageBox::Critical)
+                ->show();
+            return;
+        }
+        const auto modInfo = Nexus::parseModInfo(*info);
+        const auto fileList = Nexus::parseModFiles(*files);
+        const auto linkList = Nexus::parseDownloadLinks(*links);
+        if (!linkList || linkList->isEmpty()) {
+            CustomMessageBox::selectable(dialogParent(owner), title,
+                                         linkList ? QObject::tr("Nexus Mods gave no download address.") : linkList.error(), QMessageBox::Critical)
+                ->show();
+            return;
+        }
+        Nexus::ModFile file;
+        if (fileList) {
+            for (const auto& candidate : *fileList) {
+                if (candidate.fileId == fileId) {
+                    file = candidate;
+                }
             }
         }
-    }
 
-    const auto target = downloadTarget(instance, file.fileName.isEmpty() ? QFileInfo(linkList->first().url.path()).fileName() : file.fileName);
-    if (!QFileInfo::exists(target) || (file.size > 0 && QFileInfo(target).size() != file.size)) {
-        auto download = makeShared<NetJob>(QObject::tr("Downloading %1").arg(QFileInfo(target).fileName()), APPLICATION->network());
-        download->addNetAction(Net::Request::makeFile(linkList->first().url, target));
-        if (!runTask(download.get(), parent, QObject::tr("Nexus Mods download failed"))) {
-            QFile::remove(target);
-            return false;
+        ModEntry metadata;
+        metadata.nexusGame = game;
+        metadata.nexusModId = modId;
+        metadata.nexusFileId = fileId;
+        metadata.version = file.version;
+        if (modInfo) {
+            const bool mainFile = file.name.isEmpty() || file.name == modInfo->name || file.category.compare("MAIN", Qt::CaseInsensitive) == 0;
+            metadata.name = mainFile ? modInfo->name : QString("%1 - %2").arg(modInfo->name, file.name);
+            metadata.latestVersion = modInfo->version;
+            if (metadata.version.isEmpty()) {
+                metadata.version = modInfo->version;
+            }
         }
-    }
 
-    ModEntry metadata;
-    metadata.nexusGame = game;
-    metadata.nexusModId = modId;
-    metadata.nexusFileId = fileId;
-    metadata.version = file.version;
-    if (modInfo) {
-        const bool mainFile = file.name.isEmpty() || file.name == modInfo->name || file.category.compare("MAIN", Qt::CaseInsensitive) == 0;
-        metadata.name = mainFile ? modInfo->name : QString("%1 - %2").arg(modInfo->name, file.name);
-        metadata.latestVersion = modInfo->version;
-        if (metadata.version.isEmpty()) {
-            metadata.version = modInfo->version;
+        DownloadItem download;
+        download.url = linkList->first().url;
+        download.target = downloadTarget(target, file.fileName.isEmpty() ? QFileInfo(download.url.path()).fileName() : file.fileName);
+        download.size = file.size;
+        download.instanceId = instanceId;
+        download.metadata = metadata;
+        download.nxmKey = key;
+        download.nxmExpires = expires;
+        // a complete earlier download of unknown size is used as it is
+        if (download.size <= 0 && QFileInfo::exists(download.target)) {
+            queueInstall(instanceId, download.target, metadata);
+            return;
         }
-    }
-    return installArchive(instance, target, metadata, parent);
+        APPLICATION->downloads()->add(download);
+    });
+    return true;
 }
 
 }  // namespace
@@ -453,6 +506,11 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
         if (!runTask(&extract, parent, QObject::tr("Could not extract %1").arg(QFileInfo(archive).fileName()))) {
             return false;
         }
+    }
+    // Check Patches only looks in the downloads folder for archives (the downloads folder and the cache are BetterNMM's
+    // settings, which an install outside it has not got)
+    if (APPLICATION_DYN && QFileInfo(archive).dir() == QDir(instance->downloadsDir())) {
+        FomodPatches::remember(archive, extracted, patchCache());
     }
 
     const auto analysis = ModInstaller::analyze(extracted, game, instance->gameRoot());
@@ -577,6 +635,69 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
     }
     activatePlugins(instance, pluginsIn(target), parent);
     return true;
+}
+
+void queueInstall(const QString& instanceId, const QString& archive, const ModEntry& metadata)
+{
+    g_installs << PendingInstall{ instanceId, archive, metadata };
+    // from the event loop, so an install never starts inside the dialog or download that finished
+    QTimer::singleShot(0, APPLICATION, [] { installQueuedDownloads(); });
+}
+
+void installQueuedDownloads()
+{
+    // one installer at a time, and none while BetterNMM's Nexus Mods window waits for clicks (it calls this when it closes)
+    if (g_installing || APPLICATION->nexusDownloads()->isWindowOpen()) {
+        return;
+    }
+    g_installing = true;
+    while (!g_installs.isEmpty()) {
+        const auto next = g_installs.takeFirst();
+        auto* instance = APPLICATION->instances()->getInstanceById(next.instanceId);
+        if (!instance) {
+            CustomMessageBox::selectable(APPLICATION->mainWindow(), QObject::tr("Install mod"),
+                                         QObject::tr("%1 was downloaded for the instance %2, which no longer exists. The file is in %3.")
+                                             .arg(next.metadata.name.isEmpty() ? QFileInfo(next.archive).fileName() : next.metadata.name,
+                                                  next.instanceId, QDir::toNativeSeparators(QFileInfo(next.archive).absolutePath())),
+                                         QMessageBox::Warning)
+                ->show();
+            continue;
+        }
+        installArchive(instance, next.archive, next.metadata, dialogParent(instance->window()));
+    }
+    g_installing = false;
+}
+
+void refreshNexusLink(const DownloadItem& item, std::function<void(const QUrl&, const QString&)> answer)
+{
+    const auto expired = QObject::tr("The download address expired. Download the file from Nexus Mods again (Mod Manager Download, or the "
+                                     "download window): it continues where it stopped.");
+    const auto& mod = item.metadata;
+    const bool premium = APPLICATION->accounts()->isPremium();
+    const bool keyValid = !item.nxmKey.isEmpty() && item.nxmExpires > QDateTime::currentSecsSinceEpoch();
+    if (mod.nexusGame.isEmpty() || mod.nexusModId <= 0 || mod.nexusFileId <= 0 || APPLICATION->accounts()->apiKey().isEmpty() ||
+        (!premium && !keyValid)) {
+        answer({}, expired);
+        return;
+    }
+    auto job = makeShared<NetJob>(QObject::tr("New address for %1").arg(item.fileName()), APPLICATION->network());
+    auto [request, data] = Net::ApiRequest::makeByteArray(Nexus::downloadLinkUrl(mod.nexusGame, mod.nexusModId, mod.nexusFileId,
+                                                                                 premium ? QString() : item.nxmKey, premium ? 0 : item.nxmExpires));
+    job->addNetAction(request);
+    job->setAskRetry(false);
+    startLookup(job, [request, data, answer = std::move(answer), expired] {
+        if (!request->wasSuccessful()) {
+            const int status = request->replyStatusCode();
+            answer({}, status > 0 ? Nexus::errorMessage(status, {}) : request->failReason());
+            return;
+        }
+        const auto links = Nexus::parseDownloadLinks(*data);
+        if (!links || links->isEmpty()) {
+            answer({}, links ? expired : links.error());
+            return;
+        }
+        answer(links->first().url, {});
+    });
 }
 
 bool installNexusFile(GameInstance* instance, const NxmLink& link, QWidget* parent)
@@ -709,6 +830,9 @@ bool deploy(GameInstance* instance, QWidget* parent)
     } while (deployed && again.contains(instance));
     running.remove(instance);
     again.remove(instance);
+    if (deployed) {
+        setUpNemesis(instance, parent);
+    }
     return deployed;
 }
 
@@ -924,11 +1048,13 @@ bool autoSort(GameInstance* instance, QWidget* parent)
 
 namespace {
 
-/// Runs work on a worker thread as a task, so a progress dialog shows while it runs
+/// Runs work on a worker thread as a task, so a progress dialog shows while it runs. The work is given a function to
+/// report how much of how much it has done, from any thread.
 template <typename T>
 class WorkerTask : public Task {
    public:
-    WorkerTask(QString status, std::function<T()> work) : m_status(std::move(status)), m_work(std::move(work)) {}
+    using Progress = std::function<void(int, int)>;
+    WorkerTask(QString status, std::function<T(const Progress&)> work) : m_status(std::move(status)), m_work(std::move(work)) {}
     const T& result() const { return m_result; }
 
    protected:
@@ -939,20 +1065,83 @@ class WorkerTask : public Task {
             m_result = m_watcher.result();
             emitSucceeded();
         });
-        m_watcher.setFuture(QtConcurrent::run(m_work));
+        Progress progress = [this](int done, int total) {
+            QMetaObject::invokeMethod(this, [this, done, total] { setProgress(done, total); }, Qt::QueuedConnection);
+        };
+        m_watcher.setFuture(QtConcurrent::run([work = m_work, progress] { return work(progress); }));
     }
 
    private:
     QString m_status;
-    std::function<T()> m_work;
+    std::function<T(const Progress&)> m_work;
     QFutureWatcher<T> m_watcher;
     T m_result;
 };
 
-/// Where Check Patches keeps what it read from archives
-QString patchCache()
+/**
+ * Gets Nemesis ready after a deploy, when the instance has it (see Nemesis::prepare): its settings and the patches mods
+ * brought ticked, its engine updated when its patches changed, and a Launch menu entry that runs it in the instance.
+ *
+ * Nemesis 0.84 (the current release) fails on its own "-stage" option, so what it generates goes where it always does,
+ * into the instance's Data folder, as files of their own.
+ */
+void setUpNemesis(GameInstance* instance, QWidget* parent)
 {
-    return FS::PathCombine(APPLICATION->dataRoot(), "cache", "fomod");
+    const auto dataDir = instance->dataDir();
+    const auto program = FS::PathCombine(dataDir, Nemesis::k_engine);
+    if (!QFileInfo::exists(program)) {
+        return;
+    }
+    const auto title = QObject::tr("Nemesis");
+    const auto dataPath = instance->definition().dataPath;
+    auto* mods = instance->modList();
+    // the patches Nemesis comes with are the ones in its own mod; the rest came with other mods, which want them used
+    QSet<QString> own;
+    for (const auto& mod : mods->enabledMods()) {
+        const auto data = dataPath.isEmpty() ? mods->modDir(mod.id) : FS::PathCombine(mods->modDir(mod.id), dataPath);
+        if (QFileInfo::exists(FS::PathCombine(data, Nemesis::k_engine))) {
+            own = Nemesis::patchCodes(FS::PathCombine(data, "Nemesis_Engine", "mod"));
+        }
+    }
+    const auto setup = Nemesis::prepare(dataDir, own);
+    if (!setup) {
+        showError(parent, title, setup.error());
+        return;
+    }
+
+    const auto relative = dataPath.isEmpty() ? Nemesis::k_engine : dataPath + '/' + Nemesis::k_engine;
+    auto tools = instance->customExecutables();
+    if (std::none_of(tools.begin(), tools.end(), [&relative](const GameExecutable& tool) { return tool.path.compare(relative, Qt::CaseInsensitive) == 0; })) {
+        tools << GameExecutable{ .name = "Nemesis", .path = relative };
+        instance->setCustomExecutables(tools);
+    }
+
+    if (setup->engineOutdated) {
+        // its "Update Engine": the patches are worked into the engine before it can generate anything
+        WorkerTask<QString> update(QObject::tr("Updating the Nemesis engine for its patches"), [program](const auto&) -> QString {
+            QProcess process;
+            process.setWorkingDirectory(QFileInfo(program).absolutePath());
+            process.start(program, { "-update" });
+            if (!process.waitForStarted()) {
+                return process.errorString();
+            }
+            if (!process.waitForFinished(10 * 60 * 1000)) {
+                process.kill();
+                process.waitForFinished();
+                return QObject::tr("it did not finish within 10 minutes");
+            }
+            return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0 ? QString()
+                                                                                           : QObject::tr("it stopped with code %1").arg(process.exitCode());
+        });
+        runTask(&update, parent, title);
+        if (!update.result().isEmpty()) {
+            showError(parent, title,
+                      QObject::tr("Updating the Nemesis engine failed: %1. Its log: %2")
+                          .arg(update.result(), QDir::toNativeSeparators(FS::PathCombine(QFileInfo(program).absolutePath(), "UpdateLog.txt"))));
+        } else if (auto saved = Nemesis::engineUpdated(dataDir); !saved) {
+            showError(parent, title, saved.error());
+        }
+    }
 }
 
 FomodPatches::Mod patchMod(GameInstance* instance, const ModEntry& entry)
@@ -994,7 +1183,9 @@ void addPatches(GameInstance* instance, const QList<FomodPatches::Patch>& patche
         const auto modPatches = byMod.value(id);
         WorkerTask<Result<FomodPatches::Installed>> adding(
             QObject::tr("Adding patches to %1").arg(entry.name),
-            [mod = patchMod(instance, entry), modPatches, states, cache = patchCache()] { return FomodPatches::install(mod, modPatches, states, cache); });
+            [mod = patchMod(instance, entry), modPatches, states, cache = patchCache()](const auto&) {
+                return FomodPatches::install(mod, modPatches, states, cache);
+            });
         runTask(&adding, parent, title);
         const auto& result = adding.result();
         if (!result) {
@@ -1041,7 +1232,9 @@ void checkPatches(GameInstance* instance, QWidget* parent)
         }
     }
     WorkerTask<FomodPatches::Check> reading(QObject::tr("Reading the installers of %n mod(s)", "", static_cast<int>(mods.size())),
-                                            [mods, states = fileStates(instance), cache = patchCache()] { return FomodPatches::find(mods, states, cache); });
+                                            [mods, states = fileStates(instance), cache = patchCache()](const auto& progress) {
+                                                return FomodPatches::find(mods, states, cache, progress);
+                                            });
     if (!runTask(&reading, parent, title)) {
         return;
     }

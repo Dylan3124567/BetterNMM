@@ -32,8 +32,11 @@
 #include <QUuid>
 #include <QtConcurrent/QtConcurrentMap>
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <tuple>
+
+#include <archive.h>
 
 #include "FileSystem.h"
 #include "archive/ArchiveReader.h"
@@ -86,7 +89,7 @@ struct Listing {
 };
 
 /**
- * The cache file of an archive: 7-Zip puts the installer configuration last, so reading it unpacks the whole archive
+ * The cache file of an archive: where 7-Zip put the installer configuration last, reading it unpacks the whole archive
  * (half a minute for a gigabyte). An archive with another size or time is another file.
  */
 QString cachePath(const QString& cacheDir, const QString& archive)
@@ -142,7 +145,32 @@ void writeCache(const QString& path, const Listing& listing)
     }
 }
 
-/// The archive's files and its XML installer, in one pass, or from the cache
+/**
+ * A 7z skips entries without unpacking them only until something is read; after that, every entry skipped in the same
+ * solid block is unpacked, and that block can be gigabytes long. Other archives skip the same either way.
+ */
+bool isSevenZip(MMCZip::ArchiveReader::File* f)
+{
+    return (f->format() & ARCHIVE_FORMAT_BASE_MASK) == ARCHIVE_FORMAT_7ZIP;
+}
+
+/// Adds the file to @p listing; true when it is the installer configuration nearest the top so far, the one installing
+/// picked
+bool addEntry(Listing& listing, MMCZip::ArchiveReader::File* f)
+{
+    const auto path = normal(f->filename());
+    const auto key = path.toLower();
+    listing.entries.insert(key, Entry{ path, f->size() });
+    if ((key == "fomod/moduleconfig.xml" || key.endsWith("/fomod/moduleconfig.xml")) &&
+        (listing.config.isEmpty() || key.size() < listing.config.size())) {
+        listing.config = key;
+        return true;
+    }
+    return false;
+}
+
+/// The archive's files and its XML installer, or the cache of them. A 7z is listed first and its installer read in a
+/// second pass that stops there, so nothing after the installer is unpacked.
 Result<Listing> list(const QString& archive, const QString& cacheDir)
 {
     const auto cached = cachePath(cacheDir, archive);
@@ -150,23 +178,25 @@ Result<Listing> list(const QString& archive, const QString& cacheDir)
         return *listing;
     }
     Listing listing;
-    MMCZip::ArchiveReader reader(archive);
-    TRY(reader.parse([&](MMCZip::ArchiveReader::File* f) -> Result<> {
-        if (!f->isFile()) {
-            return f->skip();
-        }
-        const auto path = normal(f->filename());
-        const auto key = path.toLower();
-        listing.entries.insert(key, Entry{ path, f->size() });
-        // the installer nearest the top is the one installing picked
-        if ((key == "fomod/moduleconfig.xml" || key.endsWith("/fomod/moduleconfig.xml")) &&
-            (listing.config.isEmpty() || key.size() < listing.config.size())) {
+    bool sevenZip = false;
+    TRY(MMCZip::ArchiveReader(archive).parse([&](MMCZip::ArchiveReader::File* f) -> Result<> {
+        sevenZip = isSevenZip(f);
+        if (f->isFile() && addEntry(listing, f) && !sevenZip) {
             TRY_INTO(listing.xml, f->readAll());
-            listing.config = key;
             return {};
         }
         return f->skip();
     }));
+    if (sevenZip && !listing.config.isEmpty()) {
+        TRY(MMCZip::ArchiveReader(archive).parse([&](MMCZip::ArchiveReader::File* f) -> Result<bool> {
+            if (f->isFile() && normal(f->filename()).toLower() == listing.config) {
+                TRY_INTO(listing.xml, f->readAll());
+                return true;
+            }
+            TRY(f->skip());
+            return false;
+        }));
+    }
     writeCache(cached, listing);
     return listing;
 }
@@ -452,15 +482,17 @@ QList<QStringList> choiceNames(const Fomod::Module& module, const QList<Fomod::S
     return out;
 }
 
-Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& cacheDir)
+Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& cacheDir, const std::function<void(int, int)>& progress)
 {
     struct Outcome {
         QList<Patch> patches;
         QString unchecked;
         QString error;
     };
+    std::atomic<int> done = 0;
+    const auto total = static_cast<int>(mods.size());
     // archives unpack on several cores at once; a big one would otherwise hold up all the others
-    const auto outcomes = QtConcurrent::blockingMapped<QList<Outcome>>(mods, [&fileState, &cacheDir](const Mod& mod) {
+    const auto outcomes = QtConcurrent::blockingMapped<QList<Outcome>>(mods, [&](const Mod& mod) {
         Outcome outcome;
         if (mod.archive.isEmpty() || !QFileInfo(mod.archive).isFile()) {
             outcome.unchecked = mod.name;
@@ -468,6 +500,9 @@ Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& c
             outcome.error = QObject::tr("%1: %2").arg(mod.name, source.error());
         } else if (*source) {
             checkMod(mod, **source, fileState, outcome.patches);
+        }
+        if (progress) {
+            progress(++done, total);
         }
         return outcome;
     });
@@ -482,6 +517,38 @@ Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& c
         }
     }
     return check;
+}
+
+void remember(const QString& archive, const QString& extractedDir, const QString& cacheDir)
+{
+    const auto cached = cachePath(cacheDir, archive);
+    if (cached.isEmpty() || QFileInfo::exists(cached)) {
+        return;
+    }
+    Listing listing;
+    bool sevenZip = false;
+    const auto listed = MMCZip::ArchiveReader(archive).parse([&](MMCZip::ArchiveReader::File* f) -> Result<bool> {
+        sevenZip = isSevenZip(f);
+        if (!sevenZip) {
+            return true;
+        }
+        if (f->isFile()) {
+            addEntry(listing, f);
+        }
+        TRY(f->skip());
+        return false;
+    });
+    if (!listed || !sevenZip) {
+        return;
+    }
+    if (!listing.config.isEmpty()) {
+        QFile config(FS::PathCombine(extractedDir, listing.entries.value(listing.config).path));
+        if (!config.open(QIODevice::ReadOnly)) {
+            return;  // the check reads it from the archive then
+        }
+        listing.xml = config.readAll();
+    }
+    writeCache(cached, listing);
 }
 
 Result<Installed> install(const Mod& mod, const QList<Patch>& patches, const FileStates& fileState, const QString& cacheDir)
@@ -573,11 +640,14 @@ Result<Installed> install(const Mod& mod, const QList<Patch>& patches, const Fil
     const auto suffix = ".part-" + QUuid::createUuid().toString(QUuid::Id128).left(8);
     QStringList parts;
     auto writer = MMCZip::ArchiveWriter::createDiskWriter();
-    const auto unpacked = MMCZip::ArchiveReader(mod.archive).parse([&](MMCZip::ArchiveReader::File* f) -> Result<> {
-        const auto targets = f->isFile() ? wanted.values(normal(f->filename()).toLower()) : QList<QString>();
-        if (targets.isEmpty()) {
-            return f->skip();
+    auto pending = QSet<QString>(wanted.keyBegin(), wanted.keyEnd());
+    const auto unpacked = MMCZip::ArchiveReader(mod.archive).parse([&](MMCZip::ArchiveReader::File* f) -> Result<bool> {
+        const auto key = f->isFile() ? normal(f->filename()).toLower() : QString();
+        if (!pending.remove(key)) {
+            TRY(f->skip());
+            return false;
         }
+        const auto targets = wanted.values(key);
         const auto first = targets.first() + suffix;
         FS::ensureFilePathExists(first);
         parts << first;
@@ -589,7 +659,8 @@ Result<Installed> install(const Mod& mod, const QList<Patch>& patches, const Fil
                 return std::unexpected(QObject::tr("Could not copy %1 to %2").arg(first, other + suffix));
             }
         }
-        return {};
+        // the rest of a solid archive would only be unpacked to be skipped
+        return pending.isEmpty();
     });
     const auto discard = [&parts] {
         for (const auto& part : parts) {

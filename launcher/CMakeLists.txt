@@ -93,6 +93,8 @@ set(LAUNCHER_SOURCES
     game/Deployer.h
     game/Fomod.cpp
     game/FomodPatches.cpp
+    game/Nemesis.cpp
+    game/Nemesis.h
     game/FomodPatches.h
     game/Fomod.h
     game/GameDefinition.cpp
@@ -173,6 +175,8 @@ set(LAUNCHER_SOURCES
     net/MetaCacheSink.cpp
     net/MetaCacheSink.h
     net/Mode.h
+    net/DownloadManager.cpp
+    net/DownloadManager.h
     net/NetJob.cpp
     net/NetJob.h
     net/RPCSink.h
@@ -264,6 +268,8 @@ set(LAUNCHER_SOURCES
     ui/dialogs/NewInstanceDialog.h
     ui/dialogs/NewInstanceDialog.ui
     ui/dialogs/NexusBrowseDialog.cpp
+    ui/dialogs/DownloadsDialog.cpp
+    ui/dialogs/DownloadsDialog.h
     ui/dialogs/NexusDownloadQueue.cpp
     ui/dialogs/NexusDownloadQueue.h
     ui/dialogs/NexusBrowseDialog.h

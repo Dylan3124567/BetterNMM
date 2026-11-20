@@ -26,9 +26,8 @@
 
 #include "game/GameInstance.h"
 #include "game/ModList.h"
-#include "net/NetJob.h"
 
-class QNetworkAccessManager;
+class DownloadManager;
 class QWidget;
 
 /**
@@ -52,28 +51,32 @@ class NexusDownloadQueue : public QObject {
     };
 
     /// @p program is the download window, @p profile the folder it keeps the Nexus Mods login in
-    NexusDownloadQueue(QString program, QString profile, QNetworkAccessManager* network, QObject* parent = nullptr);
+    /// @p downloads gets the files the window finds; installing them is left to whoever handles its completed signal
+    NexusDownloadQueue(QString program, QString profile, DownloadManager* downloads, QObject* parent = nullptr);
     ~NexusDownloadQueue() override;
 
     /// Whether the download window is installed
     bool isAvailable() const;
+    /// Whether the download window is open; installs wait until it closes
+    bool isWindowOpen() const { return m_window != nullptr; }
     /// Queues files; the window opens, or takes them if it is open. Dialogs (progress, installers) appear over @p parent.
     void add(const QList<Request>& requests, QWidget* parent);
 
    signals:
-    /// Everything queued so far was handled: installed, skipped or reported
+    /// Everything queued so far was handled: handed to the downloads, skipped or reported
     void finished();
+    /// The window closed; installs held back while it was open can run
+    void closed();
 
    private:
     struct Item {
-        enum class State { Waiting, Sent, Queued, Clicked, Downloading, Downloaded, Link, Skipped, Cancelled, Failed, Done };
+        enum class State { Waiting, Sent, Queued, Clicked, Downloaded, Link, Skipped, Cancelled, Failed, Done };
         int id = 0;
         Request request;
         State state = State::Waiting;
         QString archive;
         QString nxm;     ///< a Mod Manager Download link the page gave instead of a file
         QString error;
-        NetJob::Ptr download;
     };
 
     void startWindow();
@@ -87,7 +90,7 @@ class NexusDownloadQueue : public QObject {
 
     QString m_program;
     QString m_profile;
-    QNetworkAccessManager* m_network;
+    DownloadManager* m_downloads;
     QProcess* m_window = nullptr;
     QByteArray m_output;
     QList<Item> m_items;

@@ -45,6 +45,7 @@
 #include <QFlag>
 #include <QIcon>
 #include <QMutex>
+#include <QPointer>
 #include <QUrl>
 
 #include "QObjectPtr.h"
@@ -61,6 +62,8 @@ class SettingsObject;
 class InstanceList;
 class AccountList;
 class NexusDownloadQueue;
+class DownloadManager;
+class DownloadsDialog;
 class IconList;
 class QNetworkAccessManager;
 class ITheme;
@@ -108,6 +111,12 @@ class Application : public QApplication {
 
     /// Downloads for accounts without Premium, through BetterNMM's Nexus Mods window
     NexusDownloadQueue* nexusDownloads();
+
+    /// Every download, several at once, resumed after failures, pauses and restarts; finished ones install in turn
+    DownloadManager* downloads();
+    /// Shows the downloads window
+    void showDownloads();
+    MainWindow* mainWindow() const { return m_mainWindow; }
 
     Status status() const { return m_status; }
 
@@ -175,6 +184,8 @@ class Application : public QApplication {
 
     std::unique_ptr<AccountList> m_accounts;
     NexusDownloadQueue* m_nexusDownloads = nullptr;
+    DownloadManager* m_downloads = nullptr;
+    QPointer<DownloadsDialog> m_downloadsDialog;
 
     std::unique_ptr<HttpMetaCache> m_metacache;
 

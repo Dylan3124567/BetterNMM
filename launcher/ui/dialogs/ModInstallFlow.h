@@ -19,12 +19,15 @@
 #pragma once
 
 #include <QString>
+#include <QUrl>
+#include <functional>
 
 #include "game/ModList.h"
 #include "nexus/NexusApi.h"
 
 class GameInstance;
 class QWidget;
+struct DownloadItem;
 struct NxmLink;
 
 /// The interactive steps of getting mods into an instance, shared by the main window, the mods page and the Nexus browser
@@ -71,11 +74,22 @@ struct NexusFile {
  */
 void downloadFromWebsite(GameInstance* instance, const QString& game, const QList<NexusFile>& files, QWidget* parent);
 
-/// Downloads a file from Nexus Mods (from a website download link) and installs it
+/// Downloads a file from Nexus Mods (from a website download link) in the background, alongside other downloads, and
+/// installs it when it is complete; false when the link can not be used (already reported)
 bool installNexusFile(GameInstance* instance, const NxmLink& link, QWidget* parent);
 
-/// Downloads a file from Nexus Mods without a website link; Nexus allows this for Premium members only
+/// The same without a website link; Nexus allows this for Premium members only
 bool installNexusFile(GameInstance* instance, const QString& game, int modId, int fileId, QWidget* parent);
+
+/// Installs a finished download into the instance with the id @p instanceId, after the installs queued before it: one
+/// installer at a time, never inside another dialog
+void queueInstall(const QString& instanceId, const QString& archive, const ModEntry& metadata);
+
+/// Runs the queued installs; BetterNMM's Nexus Mods window holds them back while it is open and calls this when it closes
+void installQueuedDownloads();
+
+/// Asks Nexus Mods for a new address for a download whose address expired (a DownloadManager::LinkRefresher)
+void refreshNexusLink(const DownloadItem& item, std::function<void(const QUrl&, const QString&)> answer);
 
 /**
  * Installs the script extender build made for the instance's game version from Nexus Mods. Premium members get it

@@ -52,6 +52,7 @@
 #include "DesktopServices.h"
 #include "Json.h"
 #include "game/GameInstance.h"
+#include "net/DownloadManager.h"
 #include "settings/SettingsObject.h"
 #include "ui/themes/ITheme.h"
 #include "ui/themes/ThemeManager.h"
@@ -239,6 +240,7 @@ void LauncherPage::applySettings()
 
     s->set("NumberOfConcurrentTasks", ui->numberOfConcurrentTasksSpinBox->value());
     s->set("NumberOfConcurrentDownloads", ui->numberOfConcurrentDownloadsSpinBox->value());
+    APPLICATION->downloads()->setMaxRunning(ui->numberOfConcurrentDownloadsSpinBox->value());
     s->set("NetworkRetryLimit", ui->networkRetryLimitSpinBox->value());
     s->set("RequestTimeout", ui->timeoutSecondsSpinBox->value());
 

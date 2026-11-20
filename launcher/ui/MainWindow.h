@@ -88,6 +88,7 @@ class MainWindow : public QMainWindow {
     void on_actionAbout_triggered();
 
     void on_actionCheckUpdates_triggered();
+    void on_actionDownloads_triggered();
 
     void on_actionAddInstance_triggered();
 
