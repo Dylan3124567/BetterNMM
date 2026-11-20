@@ -28,6 +28,7 @@
 
 #include "DesktopServices.h"
 #include "FileSystem.h"
+#include "game/GameDefinition.h"
 #include "game/GameInstance.h"
 #include "game/ModList.h"
 #include "game/PluginList.h"
@@ -110,7 +111,8 @@ void HealthPage::check(bool askNexus)
     }
     const auto& game = m_instance->definition();
     const HealthCheck::ScriptExtender extender{ .exists = !game.scriptExtender.isEmpty(),
-                                                .nexusModId = game.scriptExtenderMod,
+                                                // the instance's definition does not carry it; the game's does
+                                                .nexusModId = GameRegistry::byDomain(game.domain).scriptExtenderMod,
                                                 .installed = !game.scriptExtender.isEmpty() &&
                                                              QFileInfo::exists(FS::PathCombine(m_instance->gameRoot(), game.scriptExtender)) };
     m_problems << HealthCheck::requirementProblems(mods->mods(), m_details, extender);

@@ -167,7 +167,7 @@ isolated instance of the game installation Vortex manages, with:
    Recycle Bin and puts the mod's file back. A mod file deleted from the game folder comes back with the next deploy.
    **Export List** saves the mods (order, on/off, version, Nexus Mods page) and the load order as Markdown, CSV or text,
    for a support thread or a guide.
-   **Add Separator** puts a heading above the selected mod that groups the mods below it; double-click to rename it,
+   **Add Separator** puts a heading above the selected mod that groups the mods below it; double-click it or press F2 to rename it,
    click its arrow to fold its mods away. A folded group moves as a whole, Auto Sort sorts within each group, and
    exports show the headings.
    **Ignore Updates** stops pointing out newer versions of the selected mods (their *Latest* column says *ignored*) and
