@@ -295,6 +295,55 @@ QStringList sortMods(const QStringList& currentOrder, const QList<std::pair<QStr
     return order;
 }
 
+QStringList sortModsInGroups(const QStringList& currentOrder,
+                             const QSet<QString>& separators,
+                             const QList<std::pair<QString, QString>>& conflicts,
+                             const ModRules& rules,
+                             int* acrossGroups)
+{
+    QHash<QString, int> groupOf;
+    int group = 0;
+    for (const auto& id : currentOrder) {
+        if (separators.contains(id)) {
+            group++;
+        }
+        groupOf.insert(id, group);
+    }
+    QList<std::pair<QString, QString>> inside;
+    int across = 0;
+    for (const auto& pair : conflicts) {
+        if (!groupOf.contains(pair.first) || !groupOf.contains(pair.second)) {
+            continue;
+        }
+        if (groupOf.value(pair.first) == groupOf.value(pair.second)) {
+            inside << pair;
+        } else {
+            across++;
+        }
+    }
+    if (acrossGroups) {
+        *acrossGroups = across;
+    }
+    QStringList out;
+    QStringList members;
+    const auto flush = [&] {
+        if (!members.isEmpty()) {
+            out << sortMods(members, inside, rules);
+            members.clear();
+        }
+    };
+    for (const auto& id : currentOrder) {
+        if (separators.contains(id)) {
+            flush();
+            out << id;
+        } else {
+            members << id;
+        }
+    }
+    flush();
+    return out;
+}
+
 int movedCount(const QStringList& before, const QStringList& after)
 {
     // the items that keep their relative order form the longest increasing run of old positions; the rest moved

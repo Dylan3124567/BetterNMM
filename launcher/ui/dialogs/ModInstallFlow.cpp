@@ -1008,10 +1008,20 @@ bool autoSort(GameInstance* instance, QWidget* parent)
         }
     }
     QStringList modsBefore;
+    QSet<QString> separators;
     for (const auto& mod : mods->mods()) {
         modsBefore << mod.id;
+        if (mod.separator) {
+            separators.insert(mod.id);
+        }
     }
-    const auto modsAfter = AutoSort::sortMods(modsBefore, conflicts, rules);
+    int acrossGroups = 0;
+    const auto modsAfter = AutoSort::sortModsInGroups(modsBefore, separators, conflicts, rules, &acrossGroups);
+    if (acrossGroups > 0) {
+        notes << QObject::tr("Mods are sorted within their separators. %n pair(s) of mods with the same files are in different groups; "
+                             "there the mod in the lower group wins, as the separators have it.",
+                             nullptr, acrossGroups);
+    }
 
     if (!sortedPlugins.isEmpty()) {
         plugins->setOrder(sortedPlugins);
@@ -1031,7 +1041,7 @@ bool autoSort(GameInstance* instance, QWidget* parent)
         lines << QObject::tr("Mods: %1 of %2 moved. Of two mods with the same files, the one that needs the other wins, then the one "
                              "whose plugin loads later.")
                      .arg(modsMoved)
-                     .arg(modsAfter.size());
+                     .arg(mods->modCount());
     }
     lines << notes;
     QMessageBox box(QMessageBox::Information, title, lines.join("\n\n"), QMessageBox::Ok, parent);

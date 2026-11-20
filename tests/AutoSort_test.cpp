@@ -1037,6 +1037,27 @@ plugins:
 
     ////// Mods //////
 
+    void test_sort_mods_within_separators()
+    {
+        // [patch base] | [other] | [late textures]: patch needs base, so base must win inside the first group; textures and
+        // other share files across groups and stay as the separators order them
+        const QStringList current{ "patch", "base", "|separator|1", "other", "|separator|2", "late", "textures" };
+        const QSet<QString> separators{ "|separator|1", "|separator|2" };
+        AutoSort::ModRules rules;
+        rules.requirements["patch"] = { "base" };
+        rules.requirements["other"] = { "textures" };
+        rules.pluginRank = { { "late", 9 }, { "textures", 1 } };
+        const QList<std::pair<QString, QString>> conflicts{ { "base", "patch" }, { "textures", "other" }, { "textures", "late" } };
+        int across = -1;
+        const auto sorted = AutoSort::sortModsInGroups(current, separators, conflicts, rules, &across);
+        QCOMPARE(sorted, (QStringList{ "base", "patch", "|separator|1", "other", "|separator|2", "textures", "late" }));
+        QCOMPARE(across, 1);  // textures/other: in different groups, left to the separators
+        // without separators the same rules would move other after textures
+        const auto flat = AutoSort::sortMods({ "patch", "base", "other", "late", "textures" }, conflicts, rules);
+        QVERIFY(flat.indexOf("textures") < flat.indexOf("other"));
+        QCOMPARE(AutoSort::sortModsInGroups(sorted, separators, conflicts, rules), sorted);
+    }
+
     void test_sort_mods()
     {
         const QStringList current{ "patch", "base", "other", "textures", "late", "plugin-a", "plugin-b", "free" };

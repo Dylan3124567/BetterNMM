@@ -28,6 +28,21 @@
 
 #include "ui/widgets/WideBar.h"
 
+void ListFilterProxy::setRowHider(std::function<bool(int)> hidden)
+{
+    m_hidden = std::move(hidden);
+    invalidateRowsFilter();
+}
+
+bool ListFilterProxy::filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const
+{
+    // a search shows every match, hidden or not
+    if (m_hidden && filterRegularExpression().pattern().isEmpty() && m_hidden(sourceRow)) {
+        return false;
+    }
+    return QSortFilterProxyModel::filterAcceptsRow(sourceRow, sourceParent);
+}
+
 ListPage::ListPage(QWidget* parent) : QMainWindow(parent)
 {
     auto* central = new QWidget(this);
@@ -61,7 +76,7 @@ ListPage::ListPage(QWidget* parent) : QMainWindow(parent)
     m_toolbar->setMovable(false);
     addToolBar(Qt::RightToolBarArea, m_toolbar);
 
-    m_proxy = new QSortFilterProxyModel(this);
+    m_proxy = new ListFilterProxy(this);
     m_proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
     connect(m_filter, &QLineEdit::textChanged, m_proxy, &QSortFilterProxyModel::setFilterFixedString);
 }

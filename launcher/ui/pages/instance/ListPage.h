@@ -20,6 +20,7 @@
 
 #include <QMainWindow>
 #include <QSortFilterProxyModel>
+#include <functional>
 
 #include "ui/pages/BasePage.h"
 
@@ -27,6 +28,23 @@ class QLabel;
 class QLineEdit;
 class QTreeView;
 class WideBar;
+
+/// The search filter of a list page, which can also leave out rows while nothing is searched for
+class ListFilterProxy : public QSortFilterProxyModel {
+    Q_OBJECT
+   public:
+    using QSortFilterProxyModel::QSortFilterProxyModel;
+    /// @p hidden tells which source rows to leave out while the search is empty
+    void setRowHider(std::function<bool(int)> hidden);
+    /// Asks the row hider again
+    void refilter() { invalidateRowsFilter(); }
+
+   protected:
+    bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override;
+
+   private:
+    std::function<bool(int)> m_hidden;
+};
 
 /// The layout of the instance's list pages: a searchable list with an action bar on its right
 class ListPage : public QMainWindow, public BasePage {
@@ -46,7 +64,7 @@ class ListPage : public QMainWindow, public BasePage {
     QString filterText() const;
 
     QTreeView* m_view = nullptr;
-    QSortFilterProxyModel* m_proxy = nullptr;
+    ListFilterProxy* m_proxy = nullptr;
     WideBar* m_toolbar = nullptr;
 
    private:

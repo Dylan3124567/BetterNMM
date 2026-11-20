@@ -38,8 +38,11 @@ struct ModEntry {
     QString archive;        ///< file name of the archive it was installed from
     qint64 stamp = 0;       ///< install time in ms since epoch; changes when the files change
     QList<QStringList> choices;  ///< options picked in its FOMOD installer, as {step, group, option} names
+    bool ignoreUpdates = false;  ///< newer versions are not pointed out or installed by Update
+    bool separator = false;      ///< a heading that groups the mods below it; it has no folder and no files
+    bool collapsed = false;      ///< a separator whose mods are hidden in the list
 
-    bool hasUpdate() const { return !latestVersion.isEmpty() && !version.isEmpty() && latestVersion != version; }
+    bool hasUpdate() const { return !ignoreUpdates && !latestVersion.isEmpty() && !version.isEmpty() && latestVersion != version; }
 };
 
 /// The mods of an instance in priority order: a later mod's files win over an earlier mod's
@@ -72,9 +75,22 @@ class ModList : public QAbstractTableModel {
     void moveRows(QList<int> rows, int offset);
     /// Puts the mods in the order of @p ids (any not named stay after them)
     void setOrder(const QStringList& ids);
-    /// Deletes the mods and their files
+    /// Deletes the mods and their files; a separator goes alone, its mods stay
     Result<> remove(const QList<int>& rows);
     void setLatestVersion(const QString& id, const QString& version);
+    void setIgnoreUpdates(const QList<int>& rows, bool ignore);
+
+    /// Inserts a separator called @p name before @p row (at the end when @p row is out of range); returns its row
+    int addSeparator(const QString& name, int row);
+    void setCollapsed(int row, bool collapsed);
+    /// Whether the entry at @p row is a mod under a collapsed separator
+    bool hiddenByCollapse(int row) const;
+    /// @p rows plus the mods of the collapsed separators among them, which move with them; sorted
+    QList<int> withGroups(const QList<int>& rows) const;
+    /// The last row of the group that starts at @p row: the separator's last mod, or @p row itself for a mod
+    int groupEnd(int row) const;
+    /// Mods in the list, separators left out
+    int modCount() const;
 
     /// Recomputes which mods replace each other's files
     void refreshConflicts();

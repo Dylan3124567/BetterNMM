@@ -67,28 +67,39 @@ Format formatFor(const QString& fileName)
 QString write(const QString& title, const QList<ModEntry>& mods, const QStringList& plugins, Format format)
 {
     int enabled = 0;
+    int modCount = 0;
     for (const auto& mod : mods) {
         enabled += mod.enabled ? 1 : 0;
+        modCount += mod.separator ? 0 : 1;
     }
     QStringList lines;
+    int priority = 0;
     switch (format) {
         case Format::Csv:
             lines << "Priority,Enabled,Name,Version,Nexus Mods page";
             for (int i = 0; i < mods.size(); i++) {
                 const auto& mod = mods[i];
+                if (mod.separator) {
+                    lines << QString(",,%1,,").arg(csvField("== " + mod.name + " =="));
+                    continue;
+                }
                 lines << QString("%1,%2,%3,%4,%5")
-                             .arg(i + 1)
+                             .arg(++priority)
                              .arg(mod.enabled ? QStringLiteral("yes") : QStringLiteral("no"))
                              .arg(csvField(mod.name), csvField(mod.version), csvField(pageOf(mod)));
             }
             return lines.join("\r\n") + "\r\n";
         case Format::Text:
             lines << title << QString(title.size(), '=') << "";
-            lines << tr("%1 mods, %2 enabled, %3 active plugins").arg(mods.size()).arg(enabled).arg(plugins.size()) << "";
+            lines << tr("%1 mods, %2 enabled, %3 active plugins").arg(modCount).arg(enabled).arg(plugins.size()) << "";
             lines << tr("Mods (lowest priority first: a later mod's files win)");
             for (int i = 0; i < mods.size(); i++) {
                 const auto& mod = mods[i];
-                auto line = QString("%1. [%2] %3").arg(i + 1, 3).arg(mod.enabled ? 'x' : ' ').arg(mod.name);
+                if (mod.separator) {
+                    lines << QString("     --- %1 ---").arg(mod.name);
+                    continue;
+                }
+                auto line = QString("%1. [%2] %3").arg(++priority, 3).arg(mod.enabled ? 'x' : ' ').arg(mod.name);
                 if (!mod.version.isEmpty()) {
                     line += ' ' + mod.version;
                 }
@@ -106,15 +117,19 @@ QString write(const QString& title, const QList<ModEntry>& mods, const QStringLi
             break;
     }
     lines << "# " + title << "";
-    lines << tr("%1 mods, %2 enabled, %3 active plugins.").arg(mods.size()).arg(enabled).arg(plugins.size()) << "";
+    lines << tr("%1 mods, %2 enabled, %3 active plugins.").arg(modCount).arg(enabled).arg(plugins.size()) << "";
     lines << "## " + tr("Mods") << "" << tr("Lowest priority first: a later mod's files win.") << "";
     lines << "| # | " + tr("On") + " | " + tr("Mod") + " | " + tr("Version") + " | " + tr("Nexus Mods") + " |";
     lines << "|---|---|---|---|---|";
     for (int i = 0; i < mods.size(); i++) {
         const auto& mod = mods[i];
+        if (mod.separator) {
+            lines << QString("|   |   | **%1** |   |   |").arg(cell(mod.name));
+            continue;
+        }
         const auto page = pageOf(mod);
         lines << QString("| %1 | %2 | %3 | %4 | %5 |")
-                     .arg(i + 1)
+                     .arg(++priority)
                      .arg(mod.enabled ? QStringLiteral("✓") : QStringLiteral(" "))
                      .arg(cell(mod.name), cell(mod.version), page.isEmpty() ? QString(" ") : QString("[%1](%2)").arg(mod.nexusModId).arg(page));
     }

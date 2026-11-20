@@ -42,6 +42,10 @@ class ModsPage : public ListPage {
     void updateSelected();
     void updateActions();
     void updateCounts();
+    /// Moves the selection one place up (-1) or down (1) among the rows that can be seen: a collapsed separator's mods are
+    /// passed over as a whole
+    void moveSelection(int direction);
+    void addModSeparator();
     void exportList();
     void reviewChangedFiles();
 
@@ -56,4 +60,5 @@ class ModsPage : public ListPage {
     QAction* m_down = nullptr;
     QAction* m_update = nullptr;
     QAction* m_nexusPage = nullptr;
+    QAction* m_ignoreUpdates = nullptr;
 };

@@ -18,6 +18,8 @@
 
 #include "ModList.h"
 
+#include <QBrush>
+#include <QColor>
 #include <QDir>
 #include <QDirListing>
 #include <QFileInfo>
@@ -30,6 +32,7 @@
 #include <QScopeGuard>
 #include <QTimeZone>
 #include <QUrl>
+#include <QUuid>
 
 #include <climits>
 
@@ -68,10 +71,17 @@ Result<> ModList::load()
             const auto obj = value.toObject();
             ModEntry entry;
             entry.id = obj.value("id").toString();
-            if (entry.id.isEmpty() || !QFileInfo(modDir(entry.id)).isDir()) {
+            entry.separator = obj.value("separator").toBool();
+            if (entry.id.isEmpty() || (!entry.separator && !QFileInfo(modDir(entry.id)).isDir())) {
                 continue;
             }
             entry.name = obj.value("name").toString(entry.id);
+            if (entry.separator) {
+                entry.collapsed = obj.value("collapsed").toBool();
+                m_mods << entry;
+                continue;
+            }
+            entry.ignoreUpdates = obj.value("ignoreUpdates").toBool();
             entry.enabled = obj.value("enabled").toBool();
             entry.version = obj.value("version").toString();
             const auto nexus = obj.value("nexus").toObject();
@@ -107,7 +117,14 @@ Result<> ModList::save() const
 {
     QJsonArray mods;
     for (const auto& entry : m_mods) {
+        if (entry.separator) {
+            mods.append(QJsonObject{ { "id", entry.id }, { "name", entry.name }, { "separator", true }, { "collapsed", entry.collapsed } });
+            continue;
+        }
         QJsonObject obj{ { "id", entry.id }, { "name", entry.name }, { "enabled", entry.enabled }, { "stamp", entry.stamp } };
+        if (entry.ignoreUpdates) {
+            obj.insert("ignoreUpdates", true);
+        }
         if (!entry.version.isEmpty()) {
             obj.insert("version", entry.version);
         }
@@ -157,6 +174,9 @@ int ModList::indexOfInstalled(const ModEntry& metadata, const QString& archiveNa
 {
     for (int i = 0; i < m_mods.size(); i++) {
         const auto& existing = m_mods[i];
+        if (existing.separator) {
+            continue;
+        }
         const bool sameName = existing.name.compare(metadata.name, Qt::CaseInsensitive) == 0 &&
                               (metadata.nexusModId > 0 ? existing.nexusModId == metadata.nexusModId : existing.nexusModId <= 0);
         const bool sameArchive = metadata.nexusModId <= 0 && !existing.archive.isEmpty() &&
@@ -203,7 +223,7 @@ void ModList::setEnabled(const QList<int>& rows, bool enabled)
 {
     bool any = false;
     for (int row : rows) {
-        if (row >= 0 && row < m_mods.size() && m_mods[row].enabled != enabled) {
+        if (row >= 0 && row < m_mods.size() && !m_mods[row].separator && m_mods[row].enabled != enabled) {
             m_mods[row].enabled = enabled;
             emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
             any = true;
@@ -219,8 +239,7 @@ void ModList::moveRows(QList<int> rows, int offset)
     if (rows.isEmpty() || offset == 0) {
         return;
     }
-    std::sort(rows.begin(), rows.end());
-    rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
+    rows = withGroups(rows);
     if (rows.first() + offset < 0 || rows.last() + offset >= m_mods.size()) {
         return;
     }
@@ -270,9 +289,11 @@ Result<> ModList::remove(const QList<int>& rows)
         if (row < 0 || row >= m_mods.size()) {
             continue;
         }
-        const auto dir = modDir(m_mods[row].id);
-        if (!FS::deletePath(dir)) {
-            return std::unexpected(tr("Could not delete %1").arg(dir));
+        if (!m_mods[row].separator) {
+            const auto dir = modDir(m_mods[row].id);
+            if (!FS::deletePath(dir)) {
+                return std::unexpected(tr("Could not delete %1").arg(dir));
+            }
         }
         wasEnabled |= m_mods[row].enabled;
         beginRemoveRows({}, row, row);
@@ -290,6 +311,97 @@ void ModList::setLatestVersion(const QString& id, const QString& version)
         emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
         changed(false);
     }
+}
+
+void ModList::setIgnoreUpdates(const QList<int>& rows, bool ignore)
+{
+    bool any = false;
+    for (int row : rows) {
+        if (row >= 0 && row < m_mods.size() && !m_mods[row].separator && m_mods[row].ignoreUpdates != ignore) {
+            m_mods[row].ignoreUpdates = ignore;
+            emit dataChanged(index(row, 0), index(row, ColumnCount - 1));
+            any = true;
+        }
+    }
+    if (any) {
+        changed(false);
+    }
+}
+
+int ModList::addSeparator(const QString& name, int row)
+{
+    if (row < 0 || row > m_mods.size()) {
+        row = static_cast<int>(m_mods.size());
+    }
+    ModEntry entry;
+    // '|' can not be in a folder name, so no mod folder ever has this id
+    entry.id = "|separator|" + QUuid::createUuid().toString(QUuid::Id128);
+    entry.name = name;
+    entry.separator = true;
+    beginInsertRows({}, row, row);
+    m_mods.insert(row, entry);
+    endInsertRows();
+    changed(false);
+    return row;
+}
+
+void ModList::setCollapsed(int row, bool collapsed)
+{
+    if (row < 0 || row >= m_mods.size() || !m_mods[row].separator || m_mods[row].collapsed == collapsed) {
+        return;
+    }
+    m_mods[row].collapsed = collapsed;
+    emit dataChanged(index(row, 0), index(groupEnd(row), ColumnCount - 1));
+    changed(false);
+}
+
+bool ModList::hiddenByCollapse(int row) const
+{
+    if (row < 0 || row >= m_mods.size() || m_mods[row].separator) {
+        return false;
+    }
+    for (int i = row - 1; i >= 0; i--) {
+        if (m_mods[i].separator) {
+            return m_mods[i].collapsed;
+        }
+    }
+    return false;
+}
+
+QList<int> ModList::withGroups(const QList<int>& rows) const
+{
+    QSet<int> out;
+    for (int row : rows) {
+        if (row < 0 || row >= m_mods.size()) {
+            continue;
+        }
+        out.insert(row);
+        if (m_mods[row].separator && m_mods[row].collapsed) {
+            for (int i = row + 1; i <= groupEnd(row); i++) {
+                out.insert(i);
+            }
+        }
+    }
+    QList<int> sorted(out.begin(), out.end());
+    std::sort(sorted.begin(), sorted.end());
+    return sorted;
+}
+
+int ModList::groupEnd(int row) const
+{
+    if (row < 0 || row >= m_mods.size() || !m_mods[row].separator) {
+        return row;
+    }
+    int end = row;
+    while (end + 1 < m_mods.size() && !m_mods[end + 1].separator) {
+        end++;
+    }
+    return end;
+}
+
+int ModList::modCount() const
+{
+    return static_cast<int>(std::count_if(m_mods.begin(), m_mods.end(), [](const ModEntry& entry) { return !entry.separator; }));
 }
 
 void ModList::refreshConflicts()
@@ -416,6 +528,34 @@ QVariant ModList::data(const QModelIndex& index, int role) const
         }
         return out;
     };
+    if (entry.separator) {
+        switch (role) {
+            case Qt::DisplayRole:
+                if (index.column() == EnabledColumn) {
+                    return entry.collapsed ? QStringLiteral("\u25B8") : QStringLiteral("\u25BE");
+                }
+                if (index.column() == NameColumn) {
+                    return tr("%1  (%n mod(s))", nullptr, groupEnd(index.row()) - index.row()).arg(entry.name);
+                }
+                return {};
+            case Qt::EditRole:
+                return index.column() == NameColumn ? QVariant(entry.name) : QVariant();
+            case Qt::ToolTipRole:
+                return tr("A separator: it groups the mods below it. Click the arrow to hide or show them; a hidden group moves "
+                          "as a whole.");
+            case Qt::FontRole: {
+                QFont font;
+                font.setBold(true);
+                return font;
+            }
+            case Qt::BackgroundRole:
+                return QBrush(QColor(128, 128, 128, 60));
+            case Qt::TextAlignmentRole:
+                return index.column() == EnabledColumn ? QVariant(Qt::AlignCenter) : QVariant();
+            default:
+                return {};
+        }
+    }
     switch (role) {
         case Qt::CheckStateRole:
             if (index.column() == EnabledColumn) {
@@ -429,6 +569,9 @@ QVariant ModList::data(const QModelIndex& index, int role) const
                 case VersionColumn:
                     return entry.version;
                 case LatestColumn:
+                    if (entry.ignoreUpdates) {
+                        return entry.latestVersion.isEmpty() ? tr("ignored") : tr("%1 (ignored)").arg(entry.latestVersion);
+                    }
                     return entry.latestVersion;
                 case ConflictColumn: {
                     QStringList parts;
@@ -459,6 +602,9 @@ QVariant ModList::data(const QModelIndex& index, int role) const
             if (entry.hasUpdate()) {
                 lines << tr("Version %1 is available on Nexus Mods").arg(entry.latestVersion);
             }
+            if (entry.ignoreUpdates) {
+                lines << tr("Updates are ignored: Check for Updates does not point them out and Update leaves the mod as it is");
+            }
             if (!entry.archive.isEmpty()) {
                 lines << tr("Installed from %1").arg(entry.archive);
             }
@@ -469,6 +615,11 @@ QVariant ModList::data(const QModelIndex& index, int role) const
                 QFont font;
                 font.setBold(true);
                 return font;
+            }
+            return {};
+        case Qt::ForegroundRole:
+            if (index.column() == LatestColumn && entry.ignoreUpdates) {
+                return QBrush(Qt::gray);
             }
             return {};
         default:
@@ -508,6 +659,9 @@ Qt::ItemFlags ModList::flags(const QModelIndex& index) const
         return out;
     }
     out |= Qt::ItemIsDragEnabled;
+    if (m_mods[index.row()].separator) {
+        return index.column() == NameColumn ? out | Qt::ItemIsEditable : out;
+    }
     if (index.column() == EnabledColumn) {
         out |= Qt::ItemIsUserCheckable;
     } else if (index.column() == NameColumn) {
@@ -580,10 +734,10 @@ bool ModList::dropMimeData(const QMimeData* data, Qt::DropAction action, int row
     for (const auto& part : QString::fromUtf8(data->data(g_rowsMime)).split(',', Qt::SkipEmptyParts)) {
         rows << part.toInt();
     }
+    rows = withGroups(rows);
     if (rows.isEmpty()) {
         return false;
     }
-    std::sort(rows.begin(), rows.end());
     // rows above the drop target shift it up once they are taken out
     const int above = static_cast<int>(std::count_if(rows.begin(), rows.end(), [target](int r) { return r < target; }));
     target = std::clamp(target - above, 0, static_cast<int>(m_mods.size() - rows.size()));

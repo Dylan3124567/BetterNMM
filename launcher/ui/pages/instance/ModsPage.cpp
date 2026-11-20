@@ -23,6 +23,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QHeaderView>
+#include <QInputDialog>
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
@@ -74,6 +75,8 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     m_enable = addAction(tr("&Enable"), tr("Enable the selected mods."), "status-good");
     m_disable = addAction(tr("&Disable"), tr("Disable the selected mods."), "status-bad");
     m_remove = addAction(tr("&Remove"), tr("Delete the selected mods."), "delete");
+    auto* separator = addAction(tr("Add Se&parator"), tr("Insert a heading above the selected mod that groups the mods below it. Click "
+                                                       "its arrow to hide or show them; double-click its name to rename it."));
     addSeparator();
     m_up = addAction(tr("Move &Up"), tr("Lower the priority of the selected mods."));
     m_down = addAction(tr("Move D&own"), tr("Raise the priority of the selected mods: their files win over the mods above."));
@@ -87,6 +90,9 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     addSeparator();
     auto* check = addAction(tr("Check for &Updates"), tr("Ask Nexus Mods for the newest version of every mod installed from it."), "refresh");
     m_update = addAction(tr("U&pdate"), tr("Install the newest file of the selected mods."));
+    m_ignoreUpdates = addAction(tr("&Ignore Updates"), tr("Stop pointing out newer versions of the selected mods, and leave them out of "
+                                                         "Update. Choose it again to stop ignoring them."));
+    m_ignoreUpdates->setCheckable(true);
     m_nexusPage = addAction(tr("View on &Nexus"), tr("Open the selected mods' pages on Nexus Mods."));
     auto* folder = addAction(tr("View &Folder"), tr("Open the folder of the selected mod, or of all mods."), "viewfolder");
     auto* redeploy = addAction(tr("Re&deploy"), tr("Make the game folder match the enabled mods again."));
@@ -106,18 +112,43 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
         NexusBrowseDialog dialog(m_instance, this);
         dialog.exec();
     });
+    connect(separator, &QAction::triggered, this, &ModsPage::addModSeparator);
+    connect(m_ignoreUpdates, &QAction::triggered, this, [this](bool ignore) { m_mods->setIgnoreUpdates(selectedRows(), ignore); updateActions(); });
+    m_proxy->setRowHider([this](int row) { return m_mods->hiddenByCollapse(row); });
+    connect(m_view, &QAbstractItemView::clicked, this, [this](const QModelIndex& index) {
+        const auto source = m_proxy->mapToSource(index);
+        if (source.column() == ModList::EnabledColumn && source.row() < m_mods->mods().size() && m_mods->mods()[source.row()].separator) {
+            m_mods->setCollapsed(source.row(), !m_mods->mods()[source.row()].collapsed);
+        }
+    });
     connect(m_enable, &QAction::triggered, this, [this] { m_mods->setEnabled(selectedRows(), true); });
     connect(m_disable, &QAction::triggered, this, [this] { m_mods->setEnabled(selectedRows(), false); });
     connect(m_remove, &QAction::triggered, this, [this] {
         QStringList ids;
+        QStringList modNames;
+        int separators = 0;
         for (int row : selectedRows()) {
-            ids << m_mods->mods()[row].id;
+            const auto& entry = m_mods->mods()[row];
+            ids << entry.id;
+            if (entry.separator) {
+                separators++;
+            } else {
+                modNames << entry.name;
+            }
         }
         if (ids.isEmpty()) {
             return;
         }
-        const auto question = ids.size() == 1 ? tr("Delete %1 and its files from this instance?").arg(m_mods->mods()[m_mods->indexOf(ids.first())].name)
-                                              : tr("Delete %n mods and their files from this instance?", nullptr, static_cast<int>(ids.size()));
+        QString question;
+        if (modNames.isEmpty()) {
+            question = tr("Remove %n separator(s)? The mods under them stay.", nullptr, separators);
+        } else {
+            question = modNames.size() == 1 ? tr("Delete %1 and its files from this instance?").arg(modNames.first())
+                                            : tr("Delete %n mods and their files from this instance?", nullptr, static_cast<int>(modNames.size()));
+            if (separators > 0) {
+                question += "\n\n" + tr("%n selected separator(s) go too; the mods under them stay.", nullptr, separators);
+            }
+        }
         if (QMessageBox::question(this, tr("Remove mods"), question) != QMessageBox::Yes) {
             return;
         }
@@ -132,8 +163,8 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
             CustomMessageBox::selectable(this, tr("Remove mods"), removed.error(), QMessageBox::Critical)->exec();
         }
     });
-    connect(m_up, &QAction::triggered, this, [this] { m_mods->moveRows(selectedRows(), -1); });
-    connect(m_down, &QAction::triggered, this, [this] { m_mods->moveRows(selectedRows(), 1); });
+    connect(m_up, &QAction::triggered, this, [this] { moveSelection(-1); });
+    connect(m_down, &QAction::triggered, this, [this] { moveSelection(1); });
     connect(autoSort, &QAction::triggered, this, [this] { ModInstallFlow::autoSort(m_instance, this); });
     connect(check, &QAction::triggered, this, &ModsPage::checkForUpdates);
     connect(m_update, &QAction::triggered, this, &ModsPage::updateSelected);
@@ -147,7 +178,8 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     });
     connect(folder, &QAction::triggered, this, [this] {
         const auto rows = selectedRows();
-        DesktopServices::openPath(rows.size() == 1 ? m_mods->modDir(m_mods->mods()[rows.first()].id) : m_mods->modsDir(), true);
+        const bool oneMod = rows.size() == 1 && !m_mods->mods()[rows.first()].separator;
+        DesktopServices::openPath(oneMod ? m_mods->modDir(m_mods->mods()[rows.first()].id) : m_mods->modsDir(), true);
     });
     connect(redeploy, &QAction::triggered, this, [this] { ModInstallFlow::deploy(m_instance, this); });
     connect(exportList, &QAction::triggered, this, &ModsPage::exportList);
@@ -155,10 +187,15 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
 
     connect(m_mods, &ModList::deploymentChanged, this, &ModsPage::scheduleDeploy);
     connect(m_mods, &ModList::filesDropped, this, &ModsPage::installFiles);
-    connect(m_mods, &QAbstractItemModel::dataChanged, this, &ModsPage::updateCounts);
-    connect(m_mods, &QAbstractItemModel::modelReset, this, &ModsPage::updateCounts);
-    connect(m_mods, &QAbstractItemModel::rowsInserted, this, &ModsPage::updateCounts);
-    connect(m_mods, &QAbstractItemModel::rowsRemoved, this, &ModsPage::updateCounts);
+    // which rows a collapsed separator hides follows every change of the list
+    const auto refresh = [this] {
+        m_proxy->refilter();
+        updateCounts();
+    };
+    connect(m_mods, &QAbstractItemModel::modelReset, this, refresh);
+    connect(m_mods, &QAbstractItemModel::dataChanged, this, refresh);
+    connect(m_mods, &QAbstractItemModel::rowsInserted, this, refresh);
+    connect(m_mods, &QAbstractItemModel::rowsRemoved, this, refresh);
     connect(m_view->selectionModel(), &QItemSelectionModel::selectionChanged, this, &ModsPage::updateActions);
     connect(m_instance, &BaseInstance::runningStatusChanged, this, &ModsPage::updateActions);
     updateCounts();
@@ -329,26 +366,45 @@ void ModsPage::checkForUpdates()
         }
     }
     int updates = 0;
+    int ignored = 0;
     for (const auto& mod : m_mods->mods()) {
         updates += mod.nexusModId > 0 && mod.hasUpdate() ? 1 : 0;
+        ignored += mod.nexusModId > 0 && mod.ignoreUpdates && !mod.latestVersion.isEmpty() && mod.latestVersion != mod.version ? 1 : 0;
     }
-    CustomMessageBox::selectable(this, tr("Check for updates"),
-                                 updates > 0 ? tr("%n mod(s) can be updated; their newest version is shown in bold.", nullptr, updates)
-                                             : tr("All mods from Nexus Mods are up to date."),
-                                 QMessageBox::Information)
-        ->exec();
+    auto text = updates > 0 ? tr("%n mod(s) can be updated; their newest version is shown in bold.", nullptr, updates)
+                            : tr("All mods from Nexus Mods are up to date.");
+    if (ignored > 0) {
+        text += "\n\n" + tr("%n mod(s) with a newer version are left alone because you ignore their updates.", nullptr, ignored);
+    }
+    CustomMessageBox::selectable(this, tr("Check for updates"), text, QMessageBox::Information)->exec();
     updateActions();
 }
 
 void ModsPage::updateSelected()
 {
     QMap<QString, QList<ModEntry>> byGame;
+    QStringList ignored;
     for (int row : selectedRows()) {
         if (const auto& mod = m_mods->mods()[row]; mod.nexusModId > 0) {
-            byGame[mod.nexusGame] << mod;
+            if (mod.ignoreUpdates) {
+                ignored << mod.name;
+            } else {
+                byGame[mod.nexusGame] << mod;
+            }
         }
     }
+    if (byGame.isEmpty() && !ignored.isEmpty()) {
+        CustomMessageBox::selectable(this, tr("Update mods"),
+                                     tr("You ignore the updates of %1. Choose Ignore Updates again to stop ignoring them, then Update.")
+                                         .arg(ignored.join(", ")),
+                                     QMessageBox::Information)
+            ->exec();
+        return;
+    }
     QStringList problems;
+    if (!ignored.isEmpty()) {
+        problems << tr("Left alone because you ignore their updates: %1").arg(ignored.join(", "));
+    }
     for (auto it = byGame.cbegin(); it != byGame.cend(); ++it) {
         QList<int> ids;
         for (const auto& mod : it.value()) {
@@ -388,8 +444,15 @@ void ModsPage::updateActions()
     const auto rows = selectedRows();
     const bool any = !rows.isEmpty();
     bool anyNexus = false;
+    bool anyMod = false;
+    bool allIgnored = true;
     for (int row : rows) {
-        anyNexus |= m_mods->mods()[row].nexusModId > 0;
+        const auto& entry = m_mods->mods()[row];
+        anyNexus |= entry.nexusModId > 0;
+        if (!entry.separator) {
+            anyMod = true;
+            allIgnored &= entry.ignoreUpdates;
+        }
     }
     m_view->setEnabled(!running);
     m_toolbar->setEnabled(!running);
@@ -400,11 +463,55 @@ void ModsPage::updateActions()
     m_down->setEnabled(any && filterText().isEmpty());
     m_update->setEnabled(anyNexus);
     m_nexusPage->setEnabled(anyNexus);
+    m_ignoreUpdates->setEnabled(anyMod);
+    m_ignoreUpdates->setChecked(anyMod && allIgnored);
+}
+
+void ModsPage::moveSelection(int direction)
+{
+    const auto rows = m_mods->withGroups(selectedRows());
+    if (rows.isEmpty()) {
+        return;
+    }
+    const auto& mods = m_mods->mods();
+    if (direction < 0) {
+        int target = rows.first() - 1;
+        if (target < 0) {
+            return;
+        }
+        // above is a mod of a collapsed group: the whole group is the one place to pass
+        if (m_mods->hiddenByCollapse(target)) {
+            while (target > 0 && !mods[target].separator) {
+                target--;
+            }
+        }
+        m_mods->moveRows(rows, target - rows.first());
+        return;
+    }
+    const int next = rows.last() + 1;
+    if (next >= mods.size()) {
+        return;
+    }
+    const int end = mods[next].separator && mods[next].collapsed ? m_mods->groupEnd(next) : next;
+    m_mods->moveRows(rows, end - rows.last());
+}
+
+void ModsPage::addModSeparator()
+{
+    bool ok = false;
+    const auto name = QInputDialog::getText(this, tr("Add separator"), tr("Name of the separator:"), QLineEdit::Normal, QString(), &ok).trimmed();
+    if (!ok || name.isEmpty()) {
+        return;
+    }
+    const auto rows = selectedRows();
+    const int row = m_mods->addSeparator(name, rows.isEmpty() ? -1 : rows.first());
+    m_view->selectionModel()->select(m_proxy->mapFromSource(m_mods->index(row, 0)),
+                                     QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
 }
 
 void ModsPage::updateCounts()
 {
-    const auto total = m_mods->mods().size();
+    const auto total = m_mods->modCount();
     const auto enabled = m_mods->enabledMods().size();
     setCounts(tr("%1 installed, %2 enabled").arg(total).arg(enabled));
 }

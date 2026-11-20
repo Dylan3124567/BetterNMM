@@ -178,6 +178,19 @@ class LoadOrderTest : public QObject {
         QVERIFY2(text.contains("  1. [x] SkyUI 5.2SE  https://www.nexusmods.com/skyrimspecialedition/mods/12604\r\n"), qPrintable(text));
         QVERIFY(text.contains("  2. [ ] My | own, \"tweaks\"\r\n"));
         QVERIFY(text.contains("Load order\r\n  1. Skyrim.esm\r\n  2. SkyUI_SE.esp\r\n"));
+
+        // separators are headings, not mods
+        auto grouped = mods;
+        grouped.insert(1, ModEntry{ .id = "|separator|1", .name = "Tweaks", .separator = true });
+        const auto groupedMarkdown = ModListExport::write("Main", grouped, plugins, ModListExport::Format::Markdown);
+        QVERIFY(groupedMarkdown.contains("2 mods, 1 enabled"));
+        QVERIFY2(groupedMarkdown.contains("|   |   | **Tweaks** |   |   |\n| 2 |"), qPrintable(groupedMarkdown));
+        QCOMPARE(ModListExport::write("Main", grouped, plugins, ModListExport::Format::Csv),
+                 QString("Priority,Enabled,Name,Version,Nexus Mods page\r\n"
+                         "1,yes,SkyUI,5.2SE,https://www.nexusmods.com/skyrimspecialedition/mods/12604\r\n"
+                         ",,== Tweaks ==,,\r\n"
+                         "2,no,\"My | own, \"\"tweaks\"\"\",,\r\n"));
+        QVERIFY(ModListExport::write("Main", grouped, plugins, ModListExport::Format::Text).contains("     --- Tweaks ---\r\n  2. [ ] My"));
     }
 
     void test_plugin_slots()
@@ -368,6 +381,89 @@ class LoadOrderTest : public QObject {
         QVERIFY(reloaded.remove({ reloaded.indexOf("Manual") }).has_value());
         QVERIFY(!QFileInfo::exists(FS::PathCombine(mods, "Manual")));
         QCOMPARE(reloaded.mods().size(), 2);
+    }
+
+    void test_ignored_updates()
+    {
+        QTemporaryDir dir;
+        const auto mods = FS::PathCombine(dir.path(), "mods");
+        writeFile(FS::PathCombine(mods, "A/Data/a.esp"));
+        const auto file = FS::PathCombine(dir.path(), "mods.json");
+        {
+            ModList list(mods, file);
+            QVERIFY(list.load().has_value());
+            list.upsert(ModEntry{ .id = "A", .name = "A", .version = "1.0", .nexusGame = "skyrimspecialedition", .nexusModId = 1 });
+            list.setLatestVersion("A", "2.0");
+            QVERIFY(list.mods()[0].hasUpdate());
+            list.setIgnoreUpdates({ 0 }, true);
+            QVERIFY(!list.mods()[0].hasUpdate());
+            QCOMPARE(list.data(list.index(0, ModList::LatestColumn), Qt::DisplayRole).toString(), QString("2.0 (ignored)"));
+            QVERIFY(list.data(list.index(0, ModList::NameColumn), Qt::ToolTipRole).toString().contains("Updates are ignored"));
+        }
+        ModList reloaded(mods, file);
+        QVERIFY(reloaded.load().has_value());
+        QVERIFY(reloaded.mods()[0].ignoreUpdates);
+        QVERIFY(!reloaded.mods()[0].hasUpdate());
+        reloaded.setIgnoreUpdates({ 0 }, false);
+        QVERIFY(reloaded.mods()[0].hasUpdate());
+    }
+
+    void test_separators()
+    {
+        QTemporaryDir dir;
+        const auto mods = FS::PathCombine(dir.path(), "mods");
+        for (const auto* id : { "A", "B", "C", "D" }) {
+            writeFile(FS::PathCombine(mods, QString("%1/Data/%1.esp").arg(id)));
+        }
+        const auto file = FS::PathCombine(dir.path(), "mods.json");
+        {
+            ModList list(mods, file);
+            QVERIFY(list.load().has_value());
+            list.setOrder({ "A", "B", "C", "D" });
+            list.setEnabled({ 0, 1, 2, 3 }, true);
+            // [A] [Group: B C] [D]... with the separator before B and another before D
+            QCOMPARE(list.addSeparator("Group", 1), 1);
+            QCOMPARE(list.addSeparator("Last", 4), 4);
+            QCOMPARE(list.mods().size(), 6);
+            QCOMPARE(list.modCount(), 4);
+            QCOMPARE(list.enabledMods().size(), 4);
+            QCOMPARE(list.groupEnd(1), 3);
+            QCOMPARE(list.data(list.index(1, ModList::NameColumn), Qt::DisplayRole).toString(), QString("Group  (2 mod(s))"));
+            QCOMPARE(list.data(list.index(1, ModList::NameColumn), Qt::EditRole).toString(), QString("Group"));
+            QVERIFY(!(list.flags(list.index(1, ModList::EnabledColumn)) & Qt::ItemIsUserCheckable));
+            list.setEnabled({ 1 }, true);  // a separator is never enabled
+            QVERIFY(!list.mods()[1].enabled);
+
+            list.setCollapsed(1, true);
+            QVERIFY(list.hiddenByCollapse(2));
+            QVERIFY(list.hiddenByCollapse(3));
+            QVERIFY(!list.hiddenByCollapse(1));
+            QVERIFY(!list.hiddenByCollapse(0));
+            QVERIFY(!list.hiddenByCollapse(5));
+            QCOMPARE(list.withGroups({ 1 }), (QList<int>{ 1, 2, 3 }));
+
+            // a collapsed group moves as a whole: up past A
+            list.moveRows({ 1 }, -1);
+            QStringList order;
+            for (const auto& entry : list.mods()) {
+                order << (entry.separator ? "|" + entry.name : entry.id);
+            }
+            QCOMPARE(order, (QStringList{ "|Group", "B", "C", "A", "|Last", "D" }));
+            // a mod with the same name as a separator is not taken for it when installing
+            QCOMPARE(list.indexOfInstalled(ModEntry{ .name = "Group" }, "Group.7z"), -1);
+        }
+        ModList reloaded(mods, file);
+        QVERIFY(reloaded.load().has_value());
+        QCOMPARE(reloaded.mods().size(), 6);  // no folder for the separators, and none taken for a mod
+        QVERIFY(reloaded.mods()[0].separator);
+        QVERIFY(reloaded.mods()[0].collapsed);
+        QCOMPARE(reloaded.mods()[0].name, QString("Group"));
+        QVERIFY(reloaded.mods()[0].id.contains('|'));
+        // removing a separator leaves its mods
+        QVERIFY(reloaded.remove({ 0 }).has_value());
+        QCOMPARE(reloaded.modCount(), 4);
+        QCOMPARE(reloaded.mods().size(), 5);
+        QVERIFY(QFileInfo::exists(FS::PathCombine(mods, "B")));
     }
 };
 

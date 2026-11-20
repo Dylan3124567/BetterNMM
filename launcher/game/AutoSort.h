@@ -65,6 +65,17 @@ struct ModRules {
  */
 QStringList sortMods(const QStringList& currentOrder, const QList<std::pair<QString, QString>>& conflicts, const ModRules& rules);
 
+/**
+ * sortMods for a list that @p separators split into groups the person ordered: each group is sorted on its own and the
+ * groups and separators keep their places, so no mod leaves its group. @p acrossGroups gets how many pairs of
+ * @p conflicts have their mods in different groups (the later group wins those).
+ */
+QStringList sortModsInGroups(const QStringList& currentOrder,
+                             const QSet<QString>& separators,
+                             const QList<std::pair<QString, QString>>& conflicts,
+                             const ModRules& rules,
+                             int* acrossGroups = nullptr);
+
 /// How many items of @p before have to move to get @p after (both hold the same items)
 int movedCount(const QStringList& before, const QStringList& after);
 
