@@ -48,6 +48,7 @@
 #include "nexus/NexusAccount.h"
 #include "nexus/NexusApi.h"
 #include "settings/SettingsObject.h"
+#include "ui/dialogs/ConflictsDialog.h"
 #include "ui/dialogs/CustomMessageBox.h"
 #include "ui/dialogs/ModInstallFlow.h"
 #include "ui/dialogs/NexusBrowseDialog.h"
@@ -96,6 +97,8 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     m_nexusPage = addAction(tr("View on &Nexus"), tr("Open the selected mods' pages on Nexus Mods."));
     auto* folder = addAction(tr("View &Folder"), tr("Open the folder of the selected mod, or of all mods."), "viewfolder");
     auto* redeploy = addAction(tr("Re&deploy"), tr("Make the game folder match the enabled mods again."));
+    auto* conflicts = addAction(tr("Con&flicts..."), tr("See which mod wins each file the selected mods (or all enabled mods) "
+                                                       "share with others, and hide files you do not want deployed."));
     auto* changed = addAction(tr("Changed F&iles..."), tr("Mod files that xEdit or another tool replaced in the game folder: keep "
                                                          "the change with its mod, or put the mod's file back."));
     auto* exportList = addAction(tr("E&xport List..."), tr("Save the mods (with versions and Nexus Mods pages) and the load order as "
@@ -184,6 +187,14 @@ ModsPage::ModsPage(GameInstance* instance, QWidget* parent) : ListPage(parent), 
     connect(redeploy, &QAction::triggered, this, [this] { ModInstallFlow::deploy(m_instance, this); });
     connect(exportList, &QAction::triggered, this, &ModsPage::exportList);
     connect(changed, &QAction::triggered, this, &ModsPage::reviewChangedFiles);
+    connect(conflicts, &QAction::triggered, this, &ModsPage::showConflicts);
+    connect(m_view, &QAbstractItemView::doubleClicked, this, [this](const QModelIndex& index) {
+        const auto source = m_proxy->mapToSource(index);
+        if (source.column() == ModList::ConflictColumn && source.row() < m_mods->mods().size() && !m_mods->mods()[source.row()].separator) {
+            ConflictsDialog dialog(m_mods, { m_mods->mods()[source.row()].id }, this);
+            dialog.exec();
+        }
+    });
 
     connect(m_mods, &ModList::deploymentChanged, this, &ModsPage::scheduleDeploy);
     connect(m_mods, &ModList::filesDropped, this, &ModsPage::installFiles);
@@ -294,6 +305,21 @@ void ModsPage::reviewChangedFiles()
         save->setEnabled(!list->selectedItems().isEmpty());
         restore->setEnabled(!list->selectedItems().isEmpty());
     });
+    dialog.exec();
+}
+
+void ModsPage::showConflicts()
+{
+    QStringList ids;
+    for (int row : selectedRows()) {
+        // a separator stands for the mods of its group
+        for (int member = row; member <= m_mods->groupEnd(row); member++) {
+            if (const auto& entry = m_mods->mods()[member]; !entry.separator && !ids.contains(entry.id)) {
+                ids << entry.id;
+            }
+        }
+    }
+    ConflictsDialog dialog(m_mods, ids, this);
     dialog.exec();
 }
 

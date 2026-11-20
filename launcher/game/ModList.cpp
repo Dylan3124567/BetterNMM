@@ -417,6 +417,9 @@ void ModList::refreshConflicts()
         for (const auto& file : QDirListing(root.path(), QDirListing::IteratorFlag::Recursive | QDirListing::IteratorFlag::FilesOnly |
                                                              QDirListing::IteratorFlag::IncludeHidden)) {
             const auto key = root.relativeFilePath(file.absoluteFilePath()).toLower();
+            if (isHidden(key)) {
+                continue;
+            }
             if (const auto previous = owner.value(key); !previous.isEmpty() && previous != entry.id) {
                 if (!m_overrides[entry.id].contains(previous)) {
                     m_overrides[entry.id] << previous;
@@ -446,6 +449,9 @@ QList<ModList::Overwrite> ModList::overwrites() const
         for (const auto& file : QDirListing(root.path(), QDirListing::IteratorFlag::Recursive | QDirListing::IteratorFlag::FilesOnly |
                                                              QDirListing::IteratorFlag::IncludeHidden)) {
             const auto rel = root.relativeFilePath(file.absoluteFilePath());
+            if (isHidden(rel)) {
+                continue;
+            }
             const auto key = rel.toLower();
             if (const auto previous = owner.value(key); !previous.isEmpty() && previous != entry.id) {
                 auto& pair = pairs[{ entry.id, previous }];
@@ -471,7 +477,11 @@ QList<std::pair<QString, QString>> ModList::sharingPairs(const QString& modsDir,
         const QDir root(FS::PathCombine(modsDir, id));
         for (const auto& file : QDirListing(root.path(), QDirListing::IteratorFlag::Recursive | QDirListing::IteratorFlag::FilesOnly |
                                                              QDirListing::IteratorFlag::IncludeHidden)) {
-            auto& mods = providers[root.relativeFilePath(file.absoluteFilePath()).toLower()];
+            const auto key = root.relativeFilePath(file.absoluteFilePath()).toLower();
+            if (isHidden(key)) {
+                continue;
+            }
+            auto& mods = providers[key];
             if (mods.isEmpty() || mods.last() != id) {
                 mods << id;
             }
@@ -491,6 +501,71 @@ QList<std::pair<QString, QString>> ModList::sharingPairs(const QString& modsDir,
         }
     }
     return pairs;
+}
+
+QList<ModList::ModFile> ModList::files(const QStringList& ids) const
+{
+    const QSet<QString> scope(ids.begin(), ids.end());
+    QHash<QString, QStringList> providers;  // lower-case path -> enabled mods with it shown, lowest priority first
+    QList<ModFile> out;
+    for (const auto& entry : m_mods) {
+        const bool listed = !entry.separator && (scope.isEmpty() ? entry.enabled : scope.contains(entry.id));
+        if (!listed && !entry.enabled) {
+            continue;
+        }
+        const QDir root(modDir(entry.id));
+        for (const auto& file : QDirListing(root.path(), QDirListing::IteratorFlag::Recursive | QDirListing::IteratorFlag::FilesOnly |
+                                                             QDirListing::IteratorFlag::IncludeHidden)) {
+            auto rel = root.relativeFilePath(file.absoluteFilePath());
+            const bool hidden = isHidden(rel);
+            if (hidden) {
+                rel.chop(HiddenSuffix.size());
+            } else if (entry.enabled) {
+                auto& mods = providers[rel.toLower()];
+                if (mods.isEmpty() || mods.last() != entry.id) {
+                    mods << entry.id;
+                }
+            }
+            if (listed) {
+                out << ModFile{ .path = rel, .mod = entry.id, .hidden = hidden };
+            }
+        }
+    }
+    for (auto& file : out) {
+        file.others = providers.value(file.path.toLower());
+        file.wins = !file.hidden && !file.others.isEmpty() && file.others.last() == file.mod;
+        file.others.removeAll(file.mod);
+    }
+    return out;
+}
+
+Result<> ModList::setFilesHidden(const QList<std::pair<QString, QString>>& files, bool hidden)
+{
+    QStringList problems;
+    bool any = false;
+    for (const auto& [id, path] : files) {
+        const auto shown = FS::PathCombine(modDir(id), path);
+        const auto concealed = shown + HiddenSuffix;
+        const auto& from = hidden ? shown : concealed;
+        const auto& to = hidden ? concealed : shown;
+        if (!QFileInfo(from).isFile()) {
+            continue;  // already as asked
+        }
+        if (QFileInfo::exists(to)) {
+            problems << tr("%1: %2 is in the way.").arg(QDir::toNativeSeparators(path), QDir::toNativeSeparators(to));
+        } else if (!QFile::rename(from, to)) {
+            problems << tr("%1: could not rename it; is it open in another program?").arg(QDir::toNativeSeparators(from));
+        } else {
+            any = true;
+        }
+    }
+    if (any) {
+        changed(true);
+    }
+    if (!problems.isEmpty()) {
+        return std::unexpected(problems.join('\n'));
+    }
+    return {};
 }
 
 void ModList::changed(bool affectsDeployment)
@@ -598,6 +673,9 @@ QVariant ModList::data(const QModelIndex& index, int role) const
             }
             if (const auto loses = m_overriddenBy.value(entry.id); !loses.isEmpty()) {
                 lines << tr("Files replaced by: %1").arg(names(loses).join(", "));
+            }
+            if (index.column() == ConflictColumn) {
+                lines << tr("Double-click to see which mod wins each file, and to hide files.");
             }
             if (entry.hasUpdate()) {
                 lines << tr("Version %1 is available on Nexus Mods").arg(entry.latestVersion);

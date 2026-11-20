@@ -223,6 +223,9 @@ Result<> DeployTask::perform()
         for (const auto& file : QDirListing(root.path(), QDirListing::IteratorFlag::Recursive | QDirListing::IteratorFlag::FilesOnly |
                                                              QDirListing::IteratorFlag::IncludeHidden)) {
             const auto rel = root.relativeFilePath(file.absoluteFilePath());
+            if (ModList::isHidden(rel)) {
+                continue;
+            }
             wanted.insert(rel.toLower(), Wanted{ .path = rel, .source = file.absoluteFilePath(), .mod = mod.id, .stamp = mod.stamp });
         }
     }

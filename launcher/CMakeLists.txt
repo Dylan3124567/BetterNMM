@@ -270,6 +270,8 @@ set(LAUNCHER_SOURCES
     ui/dialogs/NexusBrowseDialog.cpp
     ui/dialogs/DownloadsDialog.cpp
     ui/dialogs/DownloadsDialog.h
+    ui/dialogs/ConflictsDialog.cpp
+    ui/dialogs/ConflictsDialog.h
     ui/dialogs/NexusDownloadQueue.cpp
     ui/dialogs/NexusDownloadQueue.h
     ui/dialogs/NexusBrowseDialog.h

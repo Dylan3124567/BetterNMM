@@ -826,6 +826,52 @@ class GameFilesTest : public QObject {
         QCOMPARE(readFile(FS::PathCombine(mods, "A/Data/A.esp")), QByteArray("cleaned A.esp"));
     }
 
+    void test_deploy_leaves_out_hidden_files()
+    {
+        QTemporaryDir dir;
+        const auto game = FS::PathCombine(dir.path(), "game");
+        const auto mods = FS::PathCombine(dir.path(), "mods");
+        writeFile(FS::PathCombine(game, "Data/textures/sky.dds"), "vanilla sky");
+        writeFile(FS::PathCombine(mods, "A/Data/textures/sky.dds"), "sky from A");
+        writeFile(FS::PathCombine(mods, "B/Data/textures/sky.dds"), "sky from B");
+        writeFile(FS::PathCombine(mods, "B/Data/B.esp"), "plugin B");
+        ModList list(mods, FS::PathCombine(dir.path(), "mods.json"));
+        QVERIFY(list.load().has_value());
+        list.setOrder({ "A", "B" });
+        list.setEnabled({ 0, 1 }, true);
+        const auto deploy = [&] {
+            DeployTask task(DeployTask::Params{ .gameDir = game,
+                                                .modsDir = mods,
+                                                .overwrittenDir = FS::PathCombine(dir.path(), "overwritten"),
+                                                .manifestPath = FS::PathCombine(dir.path(), "deployment.json"),
+                                                .enabledMods = list.enabledMods() });
+            return runTask(task);
+        };
+        const auto sky = FS::PathCombine(game, "Data/textures/sky.dds");
+        QVERIFY(deploy());
+        QCOMPARE(readFile(sky), QByteArray("sky from B"));
+
+        // B's copy hidden: A's wins; B's plugin leaves the game, and no hidden file goes in
+        QVERIFY(list.setFilesHidden({ { "B", "Data/textures/sky.dds" }, { "B", "Data/B.esp" } }, true).has_value());
+        QVERIFY(deploy());
+        QCOMPARE(readFile(sky), QByteArray("sky from A"));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(game, "Data/B.esp")));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(game, "Data/B.esp.mohidden")));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(game, "Data/textures/sky.dds.mohidden")));
+
+        // every copy hidden: the game's own file is back
+        QVERIFY(list.setFilesHidden({ { "A", "Data/textures/sky.dds" } }, true).has_value());
+        QVERIFY(deploy());
+        QCOMPARE(readFile(sky), QByteArray("vanilla sky"));
+
+        // shown again: B wins again and the game's file is set aside once more
+        QVERIFY(list.setFilesHidden({ { "B", "Data/textures/sky.dds" }, { "B", "Data/B.esp" } }, false).has_value());
+        QVERIFY(deploy());
+        QCOMPARE(readFile(sky), QByteArray("sky from B"));
+        QCOMPARE(readFile(FS::PathCombine(game, "Data/B.esp")), QByteArray("plugin B"));
+        QCOMPARE(readFile(FS::PathCombine(dir.path(), "overwritten/Data/textures/sky.dds")), QByteArray("vanilla sky"));
+    }
+
     void test_deploy_redeploys_reinstalled_mod()
     {
         QTemporaryDir dir;

@@ -48,6 +48,8 @@ class ModsPage : public ListPage {
     void addModSeparator();
     void exportList();
     void reviewChangedFiles();
+    /// The files of the selected mods, or of every enabled mod when none is selected, with which mod wins each
+    void showConflicts();
 
     GameInstance* m_instance;
     ModList* m_mods;

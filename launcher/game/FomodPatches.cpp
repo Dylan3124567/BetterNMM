@@ -42,6 +42,7 @@
 #include "archive/ArchiveReader.h"
 #include "archive/ArchiveWriter.h"
 #include "game/GameFiles.h"
+#include "game/ModList.h"
 
 namespace FomodPatches {
 namespace {
@@ -285,9 +286,14 @@ QList<Placement> expand(const Source& source, const QList<Fomod::FileItem>& item
 /// Whether the mod's folder has this file as the archive has it
 bool present(const QString& folder, const Source& source, const Placement& placement)
 {
-    const QFileInfo file(FS::PathCombine(folder, placement.destination));
     const auto size = source.entries.value(placement.key).size;
-    return file.isFile() && (size < 0 || file.size() == size);
+    // a file the person hid in the conflicts view is installed all the same
+    for (const auto& path : { FS::PathCombine(folder, placement.destination), FS::PathCombine(folder, placement.destination) + ModList::HiddenSuffix }) {
+        if (const QFileInfo file(path); file.isFile() && (size < 0 || file.size() == size)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool allPresent(const QString& folder, const Source& source, const QList<Placement>& placements)
@@ -695,8 +701,11 @@ Result<Installed> install(const Mod& mod, const QList<Patch>& patches, const Fil
         }
     }
     for (const auto& removal : removals) {
-        if (const auto target = inside(mod.folder, removal); QFileInfo::exists(target)) {
-            TRY(GameFiles::removeFile(target));
+        const auto target = inside(mod.folder, removal);
+        for (const auto& path : { target, target + ModList::HiddenSuffix }) {
+            if (QFileInfo::exists(path)) {
+                TRY(GameFiles::removeFile(path));
+            }
         }
     }
     result.choices.reserve(after.size());

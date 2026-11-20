@@ -213,6 +213,14 @@ class FomodPatchesTest : public QObject {
         QVERIFY(!titles(FomodPatches::find({ m_mod }, plugins(g_others), {}).patches).contains("Citizens patch"));
     }
 
+    void test_hidden_files_count_as_installed()
+    {
+        // hidden in the conflicts view, the option's files are still in the mod
+        writeFile(FS::PathCombine(m_mod.folder, "Lights - Citizens.esp.mohidden"), content("Lights/Patches/Citizens/Lights - Citizens.esp"));
+        writeFile(FS::PathCombine(m_mod.folder, "textures/lamp.dds.mohidden"), content("Lights/Patches/Citizens/textures/lamp.dds"));
+        QVERIFY(!titles(FomodPatches::find({ m_mod }, plugins(g_others), {}).patches).contains("Citizens patch"));
+    }
+
     void test_missing_archive_is_reported()
     {
         auto gone = m_mod;
@@ -367,6 +375,25 @@ class FomodPatchesTest : public QObject {
         QCOMPARE(weather.size(), 1);
         QVERIFY(FomodPatches::install(m_mod, weather, states, {}).has_value());
         QCOMPARE(readFile(FS::PathCombine(m_mod.folder, "Lights - Vanilla Weather.esp")), QByteArray("edited by hand, longer than before"));
+        QVERIFY(QFileInfo::exists(FS::PathCombine(m_mod.folder, "Lights - Weather.esp")));
+    }
+
+    void test_install_removes_a_replaced_file_you_hid()
+    {
+        const auto vanilla = FS::PathCombine(m_mod.folder, "Lights - Vanilla Weather.esp");
+        QVERIFY(QFile::rename(vanilla, vanilla + ".mohidden"));
+        m_mod.choices = { { "Main", "Version", "Standard" }, { "Patches", "Weather", "Vanilla weather" }, { "Patches", "Extras", "Readme" } };
+        const auto states = plugins(g_others);
+        QList<FomodPatches::Patch> weather;
+        for (const auto& patch : FomodPatches::find({ m_mod }, states, {}).patches) {
+            if (patch.title == "Weather patch") {
+                weather << patch;
+            }
+        }
+        QCOMPARE(weather.size(), 1);
+        QVERIFY(FomodPatches::install(m_mod, weather, states, {}).has_value());
+        QVERIFY(!QFileInfo::exists(vanilla));
+        QVERIFY(!QFileInfo::exists(vanilla + ".mohidden"));
         QVERIFY(QFileInfo::exists(FS::PathCombine(m_mod.folder, "Lights - Weather.esp")));
     }
 

@@ -108,6 +108,24 @@ class ModList : public QAbstractTableModel {
     /// that wins now first. Unlike overwrites() the pairs do not depend on the order: three mods with the same file are
     /// three pairs. Reads only the folders, so it can run on any thread.
     static QList<std::pair<QString, QString>> sharingPairs(const QString& modsDir, const QStringList& enabledIds);
+    /// Ending of a mod's file that the person hid: it stays in the mod folder, but is not deployed and is in no conflict
+    static inline const QString HiddenSuffix = QStringLiteral(".mohidden");
+    static bool isHidden(const QString& path) { return path.endsWith(HiddenSuffix, Qt::CaseInsensitive); }
+
+    /// One file of a mod, as the conflicts view shows it
+    struct ModFile {
+        QString path;        ///< relative to the mod folder, without HiddenSuffix
+        QString mod;         ///< id
+        QStringList others;  ///< the other enabled mods with this file and it not hidden, lowest priority first
+        bool wins = false;   ///< this mod's copy is the one deployed
+        bool hidden = false;
+    };
+    /// The files of the mods @p ids, or of every enabled mod when it is empty, with which mods have each and which wins
+    QList<ModFile> files(const QStringList& ids = {}) const;
+    /// Hides (renames to <path>.mohidden) or shows again the files {mod id, path relative to its folder without the
+    /// suffix}; the mods are redeployed once. Files that can not be renamed are named in the error, the others are done.
+    Result<> setFilesHidden(const QList<std::pair<QString, QString>>& files, bool hidden);
+
     QStringList overrides(const QString& id) const { return m_overrides.value(id); }
     QStringList overriddenBy(const QString& id) const { return m_overriddenBy.value(id); }
 

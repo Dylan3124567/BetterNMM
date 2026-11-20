@@ -16,6 +16,7 @@
  *  along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimeZone>
@@ -464,6 +465,81 @@ class LoadOrderTest : public QObject {
         QCOMPARE(reloaded.modCount(), 4);
         QCOMPARE(reloaded.mods().size(), 5);
         QVERIFY(QFileInfo::exists(FS::PathCombine(mods, "B")));
+    }
+
+    void test_hidden_files()
+    {
+        QTemporaryDir dir;
+        const auto mods = FS::PathCombine(dir.path(), "mods");
+        writeFile(FS::PathCombine(mods, "A/Data/shared.dds"));
+        writeFile(FS::PathCombine(mods, "A/Data/a.esp"));
+        writeFile(FS::PathCombine(mods, "B/Data/Shared.dds"));
+        writeFile(FS::PathCombine(mods, "C/Data/shared.dds"));
+        ModList list(mods, FS::PathCombine(dir.path(), "mods.json"));
+        QVERIFY(list.load().has_value());
+        list.setOrder({ "A", "B", "C" });
+        list.setEnabled({ 0, 1 }, true);  // C stays disabled
+        QCOMPARE(list.overrides("B"), QStringList{ "A" });
+        const auto byKey = [](const QList<ModList::ModFile>& files) {
+            QMap<QString, ModList::ModFile> out;
+            for (const auto& file : files) {
+                out.insert(file.mod + ":" + file.path.toLower(), file);
+            }
+            return out;
+        };
+        auto all = byKey(list.files());
+        QCOMPARE(all.size(), 3);  // the enabled mods' files
+        QVERIFY(all["B:data/shared.dds"].wins);
+        QCOMPARE(all["B:data/shared.dds"].others, QStringList{ "A" });
+        QVERIFY(!all["A:data/shared.dds"].wins);
+        QCOMPARE(all["A:data/shared.dds"].others, QStringList{ "B" });
+        QVERIFY(all["A:data/a.esp"].wins);
+        QVERIFY(all["A:data/a.esp"].others.isEmpty());
+        // a disabled mod's files when asked for: never winning, with the enabled mods that have them too
+        const auto disabled = list.files({ "C" });
+        QCOMPARE(disabled.size(), 1);
+        QVERIFY(!disabled[0].wins);
+        QCOMPARE(disabled[0].others, (QStringList{ "A", "B" }));
+
+        QSignalSpy redeploy(&list, &ModList::deploymentChanged);
+        QVERIFY(list.setFilesHidden({ { "B", "Data/Shared.dds" } }, true).has_value());
+        QCOMPARE(redeploy.size(), 1);
+        QVERIFY(QFileInfo::exists(FS::PathCombine(mods, "B/Data/Shared.dds.mohidden")));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(mods, "B/Data/Shared.dds")));
+        // a hidden file is in no conflict
+        QVERIFY(list.overrides("B").isEmpty());
+        QVERIFY(list.overriddenBy("A").isEmpty());
+        QVERIFY(list.overwrites().isEmpty());
+        QVERIFY(ModList::sharingPairs(mods, { "A", "B" }).isEmpty());
+        all = byKey(list.files());
+        QVERIFY(all["B:data/shared.dds"].hidden);
+        QVERIFY(!all["B:data/shared.dds"].wins);
+        QCOMPARE(all["B:data/shared.dds"].others, QStringList{ "A" });
+        QVERIFY(all["A:data/shared.dds"].wins);
+        QVERIFY(all["A:data/shared.dds"].others.isEmpty());
+
+        // hiding it again changes nothing
+        QVERIFY(list.setFilesHidden({ { "B", "Data/Shared.dds" } }, true).has_value());
+        QCOMPARE(redeploy.size(), 1);
+        // a file in the way of showing it again is reported, and both stay as they are
+        writeFile(FS::PathCombine(mods, "B/Data/Shared.dds"), "new");
+        const auto blocked = list.setFilesHidden({ { "B", "Data/Shared.dds" } }, false);
+        QVERIFY(!blocked.has_value());
+        QVERIFY(blocked.error().contains("in the way"));
+        QCOMPARE(redeploy.size(), 1);
+        QVERIFY(QFileInfo::exists(FS::PathCombine(mods, "B/Data/Shared.dds.mohidden")));
+        QVERIFY(QFile::remove(FS::PathCombine(mods, "B/Data/Shared.dds")));
+        QVERIFY(list.setFilesHidden({ { "B", "Data/Shared.dds" } }, false).has_value());
+        QCOMPARE(redeploy.size(), 2);
+        QVERIFY(QFileInfo::exists(FS::PathCombine(mods, "B/Data/Shared.dds")));
+        QCOMPARE(list.overrides("B"), QStringList{ "A" });
+
+        // both copies hidden: the two hidden files are in no conflict with each other either
+        QVERIFY(list.setFilesHidden({ { "A", "Data/shared.dds" }, { "B", "Data/Shared.dds" } }, true).has_value());
+        QCOMPARE(redeploy.size(), 3);
+        QVERIFY(list.overrides("B").isEmpty());
+        QVERIFY(list.overwrites().isEmpty());
+        QVERIFY(ModList::sharingPairs(mods, { "A", "B" }).isEmpty());
     }
 };
 
