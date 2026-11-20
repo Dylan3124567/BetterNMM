@@ -146,7 +146,7 @@ isolated instance of the game installation Vortex manages, with:
      installs. Updates from the Mods page work the same way.
    - **Mod Manager Download** buttons on the website work once BetterNMM handles `nxm://` links
      (Settings > General > *Handle Nexus Mods download links*; BetterNMM also offers this the first time it is needed).
-   - Downloads run several at a time (Settings > Launcher > *Concurrent Download Limit*, 6 by default) and install one
+   - Downloads run several at a time (Settings > General > *Concurrent Download Limit*, 6 by default) and install one
      after another as they finish. **Downloads** shows each one's progress and speed, with pause, resume and cancel. A
      dropped or stalled connection picks up where it stopped, so does a download after BetterNMM restarts, and an
      expired Nexus Mods address is renewed.
