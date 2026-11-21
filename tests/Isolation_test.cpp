@@ -274,6 +274,85 @@ class IsolationTest : public QObject {
         QCOMPARE(instance.definition().scriptExtender, QString("custom_loader.exe"));
     }
 
+    void test_launch_starts_what_is_installed()
+    {
+        QTemporaryDir dir;
+        auto global = globalSettings(dir.path());
+        const auto root = FS::PathCombine(dir.path(), "instances", "launch");
+        auto settings = std::make_unique<INISettingsObject>(FS::PathCombine(root, "instance.cfg"));
+        settings->registerSetting("InstanceType", "Game");
+        GameInstance instance(global.get(), std::move(settings), root);
+        GameInstance::applyDefinition(instance.settings(), GameRegistry::byDomain("skyrimspecialedition"));
+        const QString game = "Skyrim Special Edition";
+        const QString skse = "Script extender (skse64_loader.exe)";
+        const QString coop = "Skyrim Together (SkyrimTogether.exe)";
+        const QString coopPath = "Data/SkyrimTogetherReborn/SkyrimTogether.exe";
+        writeFile(FS::PathCombine(instance.gameRoot(), "SkyrimSE.exe"));
+        QCOMPARE(instance.defaultExecutableName(), game);
+
+        // the script extender as soon as it is in the game folder
+        writeFile(FS::PathCombine(instance.gameRoot(), "skse64_loader.exe"));
+        QCOMPARE(instance.defaultExecutableName(), skse);
+
+        // the co-op launcher (which loads the script extender itself) as soon as an enabled mod has it, deployed or not
+        writeFile(FS::PathCombine(instance.modsRoot(), "Better Together", coopPath));
+        instance.modList()->upsert(ModEntry{ .id = "Better Together", .name = "Better Together" });
+        QCOMPARE(instance.defaultExecutableName(), skse);  // installed but disabled
+        instance.modList()->setEnabled({ instance.modList()->indexOf("Better Together") }, true);
+        QCOMPARE(instance.defaultExecutableName(), coop);
+        QCOMPARE(instance.automaticExecutableName(), coop);
+        QVERIFY(instance.chosenExecutableName().isEmpty());
+        // it starts this instance's game, not the one the launcher last remembers
+        QCOMPARE(instance.executable(coop).arguments, QString(R"(--exePath "$INST_GAME_DIR\SkyrimSE.exe")"));
+        QVERIFY(instance.executable(coop).builtIn);
+        // deployed since the last change to the mod list: the game folder alone says what is installed
+        const auto manifest = instance.deploymentManifestPath();
+        writeFile(manifest, "{}");
+        {
+            QFile file(manifest);
+            QVERIFY(file.open(QIODevice::ReadWrite));
+            QVERIFY(file.setFileTime(QFileInfo(FS::PathCombine(root, "mods.json")).lastModified().addSecs(1), QFileDevice::FileModificationTime));
+        }
+        QCOMPARE(instance.defaultExecutableName(), skse);
+        writeFile(FS::PathCombine(instance.gameRoot(), coopPath));
+        QCOMPARE(instance.defaultExecutableName(), coop);
+        QVERIFY(QFile::remove(manifest));
+        QVERIFY(QFile::remove(FS::PathCombine(instance.gameRoot(), coopPath)));
+        instance.modList()->setEnabled({ instance.modList()->indexOf("Better Together") }, false);
+        QCOMPARE(instance.defaultExecutableName(), skse);
+        instance.modList()->setEnabled({ instance.modList()->indexOf("Better Together") }, true);
+
+        // a Launch choice saved by an older version is what Launch happened to show then: the game, saved before the
+        // script extender was installed, no longer keeps it from being used
+        instance.settings()->set("LaunchExecutable", game);
+        QCOMPARE(instance.defaultExecutableName(), coop);
+        QVERIFY(instance.chosenExecutableName().isEmpty());
+        // a choice made in this version stays, the game included
+        instance.settings()->set("LaunchChoiceVersion", 1);
+        QCOMPARE(instance.defaultExecutableName(), game);
+        QCOMPARE(instance.chosenExecutableName(), game);
+        instance.settings()->set("LaunchExecutable", QString());
+        QCOMPARE(instance.defaultExecutableName(), coop);
+
+        // a tool the user added for the co-op launcher stands in for the built-in entry, with its own name and arguments
+        instance.setCustomExecutables({ GameExecutable{ .name = "Skyrim Better Together", .path = coopPath, .arguments = "--own" },
+                                        GameExecutable{ .name = "xEdit", .path = "C:/Tools/xEdit.exe" } });
+        QStringList names;
+        for (const auto& exe : instance.executables()) {
+            names << exe.name;
+        }
+        QCOMPARE(names, QStringList({ game, skse, "Skyrim Better Together", "xEdit" }));
+        QCOMPARE(instance.defaultExecutableName(), QString("Skyrim Better Together"));
+        // chosen by an older version, it counts as automatic too: the script extender once the co-op mod is off
+        instance.settings()->set("LaunchChoiceVersion", 0);
+        instance.settings()->set("LaunchExecutable", QString("Skyrim Better Together"));
+        instance.modList()->setEnabled({ instance.modList()->indexOf("Better Together") }, false);
+        QCOMPARE(instance.defaultExecutableName(), skse);
+        // any other tool was picked by hand (older versions never offered one by themselves) and stays the choice
+        instance.settings()->set("LaunchExecutable", QString("xEdit"));
+        QCOMPARE(instance.defaultExecutableName(), QString("xEdit"));
+    }
+
     void test_launch_checks_the_load_order()
     {
         QTemporaryDir dir;

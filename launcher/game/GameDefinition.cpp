@@ -86,6 +86,10 @@ QList<GameDefinition> parse(const QByteArray& json, QString* error)
         def.executable = obj.value("executable").toString();
         def.scriptExtender = obj.value("scriptExtender").toString();
         def.scriptExtenderMod = obj.value("scriptExtenderMod").toInt();
+        const auto coop = obj.value("coopLauncher").toObject();
+        def.coopLauncher = coop.value("path").toString();
+        def.coopLauncherName = coop.value("name").toString();
+        def.coopLauncherArguments = coop.value("arguments").toString();
         def.crashLogger = obj.value("crashLogger").toObject().value("name").toString();
         def.crashLoggerMod = obj.value("crashLogger").toObject().value("mod").toInt();
         def.myGamesFolder = obj.value("myGames").toString();

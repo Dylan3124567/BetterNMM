@@ -38,6 +38,11 @@ struct GameDefinition {
     QString executable;      ///< relative to the game root, '/' separated
     QString scriptExtender;  ///< loader relative to the game root, empty if the game has none
     int scriptExtenderMod = 0;  ///< the script extender's mod id on Nexus Mods (same game), 0 if it is not there
+    /// a co-op launcher that starts the game with its script extender (Skyrim Together, and forks of it), relative to
+    /// the game root; empty if the game has none
+    QString coopLauncher;
+    QString coopLauncherName;
+    QString coopLauncherArguments;  ///< $INST_* variables are expanded
     QString crashLogger;        ///< the usual crash logging mod's name, empty if the game has none
     int crashLoggerMod = 0;     ///< its mod id on Nexus Mods
     QString myGamesFolder;   ///< Documents/My Games/<folder>, empty if the game keeps its settings elsewhere

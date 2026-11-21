@@ -28,6 +28,8 @@
 #include <QSettings>
 #include <QStandardPaths>
 
+#include <algorithm>
+
 #include "Application.h"
 #include "FileSystem.h"
 #include "InstanceList.h"
@@ -158,7 +160,9 @@ GameInstance::GameInstance(SettingsObject* globalSettings, std::unique_ptr<Setti
     m_settings->registerSetting("ImplicitPlugins", "");
     m_settings->registerSetting("CccFile", "");
 
+    // empty: automatic; LaunchChoiceVersion 1 marks it as a choice the user made (see chosenExecutableName)
     m_settings->registerSetting("LaunchExecutable", "");
+    m_settings->registerSetting("LaunchChoiceVersion", 0);
     m_settings->registerSetting("GameArguments", "");
     m_settings->registerSetting("CustomExecutables", "[]");
 
@@ -232,10 +236,15 @@ bool GameInstance::canLaunch() const
 
 void GameInstance::populateLaunchMenu(QMenu* menu)
 {
-    const auto current = defaultExecutableName();
-    for (const auto& exe : executables()) {
+    const auto all = executables();
+    const auto chosen = chosenExecutableName(all);
+    const auto current = chosen.isEmpty() ? automaticExecutableName(all) : chosen;
+    for (int i = 0; i < all.size(); i++) {
+        const auto& exe = all[i];
         auto* action = menu->addAction(exe.name == current ? tr("Launch %1 (default)").arg(exe.name) : tr("Launch %1").arg(exe.name));
-        action->setEnabled(QFileInfo::exists(absoluteExecutablePath(exe)));
+        // the co-op launcher and script extender (and the default, which may be a tool standing in for the co-op launcher)
+        // can be in a mod that the launch deploys first
+        action->setEnabled((i > 0 && exe.builtIn) || exe.name == current || QFileInfo::exists(absoluteExecutablePath(exe)));
         connect(action, &QAction::triggered, this, [this, name = exe.name] { APPLICATION->launch(this, name); });
     }
 }
@@ -266,10 +275,13 @@ GameDefinition GameInstance::definition() const
     def.pluginFormat = GameDefinition::pluginFormatFromString(m_settings->get("PluginFormat").toString());
     def.implicitPlugins = GameFiles::splitPatterns(m_settings->get("ImplicitPlugins").toString());
     def.cccFile = m_settings->get("CccFile").toString();
-    // the engine's limits belong to the game, not to the instance
+    // the engine's limits and the co-op launcher belong to the game, not to the instance
     const auto known = GameRegistry::byDomain(def.domain);
     def.fullPluginSlots = known.fullPluginSlots;
     def.lightPluginSlots = known.lightPluginSlots;
+    def.coopLauncher = known.coopLauncher;
+    def.coopLauncherName = known.coopLauncherName;
+    def.coopLauncherArguments = known.coopLauncherArguments;
     return def;
 }
 
@@ -568,15 +580,48 @@ QList<GameExecutable> GameInstance::executables() const
                            .path = m_settings->get("GameExecutable").toString(),
                            .arguments = args,
                            .builtIn = true };
-    if (const auto loader = definition().scriptExtender;
-        !loader.isEmpty() && QFileInfo::exists(FS::PathCombine(gameRoot(), loader))) {
-        out << GameExecutable{ .name = tr("Script extender (%1)").arg(QFileInfo(loader).fileName()),
-                               .path = loader,
+    const auto def = definition();
+    const auto custom = customExecutables();
+    // a tool the user added for the co-op launcher stands in for it, with its own name and arguments
+    if (!def.coopLauncher.isEmpty() && provides(def.coopLauncher) &&
+        std::none_of(custom.begin(), custom.end(), [&](const GameExecutable& exe) { return sameProgram(exe.path, def.coopLauncher); })) {
+        out << GameExecutable{ .name = tr("%1 (%2)").arg(def.coopLauncherName, QFileInfo(def.coopLauncher).fileName()),
+                               .path = def.coopLauncher,
+                               .arguments = def.coopLauncherArguments,
+                               .builtIn = true };
+    }
+    if (!def.scriptExtender.isEmpty() && provides(def.scriptExtender)) {
+        out << GameExecutable{ .name = tr("Script extender (%1)").arg(QFileInfo(def.scriptExtender).fileName()),
+                               .path = def.scriptExtender,
                                .arguments = args,
                                .builtIn = true };
     }
-    out << customExecutables();
+    out << custom;
     return out;
+}
+
+bool GameInstance::provides(const QString& path) const
+{
+    if (QFileInfo::exists(FS::PathCombine(gameRoot(), path))) {
+        return true;
+    }
+    // installed but not deployed yet: a launch deploys before the game starts. Every change to the mod list saves it, so
+    // with the deployment newer the game folder has every enabled mod already, and the lookup (one file check per mod,
+    // half a second for 81 mods on a cold disk) is skipped. The mod list loads on first use.
+    const QFileInfo deployed(deploymentManifestPath());
+    if (deployed.exists() && QFileInfo(FS::PathCombine(instanceRoot(), "mods.json")).lastModified() <= deployed.lastModified()) {
+        return false;
+    }
+    auto* mods = const_cast<GameInstance*>(this)->modList();
+    const auto enabled = mods->enabledMods();
+    return std::any_of(enabled.begin(), enabled.end(),
+                       [&](const ModEntry& mod) { return QFileInfo::exists(FS::PathCombine(mods->modDir(mod.id), path)); });
+}
+
+bool GameInstance::sameProgram(const QString& a, const QString& b) const
+{
+    const auto absolute = [this](const QString& path) { return QDir::cleanPath(QDir::isAbsolutePath(path) ? path : FS::PathCombine(gameRoot(), path)); };
+    return absolute(a).compare(absolute(b), Qt::CaseInsensitive) == 0;
 }
 
 QList<GameExecutable> GameInstance::customExecutables() const
@@ -624,14 +669,52 @@ GameExecutable GameInstance::executable(const QString& name) const
 QString GameInstance::defaultExecutableName() const
 {
     const auto all = executables();
+    const auto chosen = chosenExecutableName(all);
+    return chosen.isEmpty() ? automaticExecutableName(all) : chosen;
+}
+
+QString GameInstance::chosenExecutableName() const
+{
+    return chosenExecutableName(executables());
+}
+
+QString GameInstance::automaticExecutableName() const
+{
+    return automaticExecutableName(executables());
+}
+
+QString GameInstance::chosenExecutableName(const QList<GameExecutable>& all) const
+{
     const auto chosen = m_settings->get("LaunchExecutable").toString();
-    for (const auto& exe : all) {
-        if (exe.name == chosen) {
-            return chosen;
+    const auto exe = std::find_if(all.begin(), all.end(), [&](const GameExecutable& e) { return e.name == chosen; });
+    if (chosen.isEmpty() || exe == all.end()) {
+        return {};
+    }
+    // before LaunchChoiceVersion 1 the Settings page saved whatever Launch showed, picked or not: saved before the script
+    // extender or co-op launcher was installed, the game stayed the choice and they were never used
+    const auto coop = definition().coopLauncher;
+    if (m_settings->get("LaunchChoiceVersion").toInt() < 1 && (exe->builtIn || (!coop.isEmpty() && sameProgram(exe->path, coop)))) {
+        return {};
+    }
+    return chosen;
+}
+
+QString GameInstance::automaticExecutableName(const QList<GameExecutable>& all) const
+{
+    // the co-op launcher starts the game with its script extender; without one, the script extender. Starting the game
+    // without what is installed for it is almost never wanted.
+    const auto def = definition();
+    for (const auto& path : { def.coopLauncher, def.scriptExtender }) {
+        if (path.isEmpty()) {
+            continue;
+        }
+        const auto exe = std::find_if(all.begin(), all.end(), [&](const GameExecutable& e) { return sameProgram(e.path, path); });
+        // built-in entries are listed only when installed; a tool standing in for one is listed either way
+        if (exe != all.end() && (exe->builtIn || provides(path))) {
+            return exe->name;
         }
     }
-    // with a script extender installed, starting the game without it is almost never wanted
-    return all.size() > 1 && all[1].builtIn ? all[1].name : all.first().name;
+    return all.first().name;
 }
 
 QString GameInstance::absoluteExecutablePath(const GameExecutable& exe) const

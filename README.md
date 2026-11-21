@@ -207,9 +207,13 @@ isolated instance of the game installation Vortex manages, with:
    requirements are not installed, are disabled, or (the script extender) are not in the game folder. **Fix** does what
    the *Fix* column says: activate, deactivate or move plugins, enable mods, or install the requirement from Nexus
    Mods. **Find on Nexus** opens a requirement's page or searches for a missing master.
-6. **Launch** starts the game, the script extender when one is installed, or a tool (Settings > Tools: xEdit, LOOT,
-   BodySlide, ...). Tools see the instance's game folder, load order and profile exactly like the game; a tool inside
-   the game folder is kept as a path relative to it, so copies and exports of the instance use their own copy.
+6. **Launch** starts what is installed for the game: Skyrim Together (or a fork of it, such as Better Together) when the
+   game folder or an enabled mod has it, otherwise the script extender, otherwise the game itself. Skyrim Together loads
+   the script extender itself and is pointed at the instance's own game. That is *Automatic* under Settings > Game >
+   Launch; pick the game or a tool there to always start that instead. The arrow next to Launch starts any of them once,
+   and tools are added under Settings > Tools (xEdit, LOOT, BodySlide, ...). Tools see the instance's game folder, load
+   order and profile exactly like the game; a tool inside the game folder is kept as a path relative to it, so copies
+   and exports of the instance use their own copy.
    When Steam is closed, launching an isolated instance of a Steam game starts Steam first and waits until you're logged
    in: a game that finds Steam closed starts it itself, and Steam then has the instance's profile and runs the game again
    from the Steam installation (with whatever is installed there). A launch also warns when Steam is still running with an

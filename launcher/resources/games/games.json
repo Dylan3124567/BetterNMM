@@ -8,6 +8,11 @@
             "executable": "SkyrimSE.exe",
             "scriptExtender": "skse64_loader.exe",
             "scriptExtenderMod": 30379,
+            "coopLauncher": {
+                "name": "Skyrim Together",
+                "path": "Data/SkyrimTogetherReborn/SkyrimTogether.exe",
+                "arguments": "--exePath \"$INST_GAME_DIR\\SkyrimSE.exe\""
+            },
             "crashLogger": { "name": "Crash Logger SSE AE VR", "mod": 59818 },
             "myGames": "Skyrim Special Edition",
             "appData": "Skyrim Special Edition",

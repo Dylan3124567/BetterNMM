@@ -114,7 +114,12 @@ class GameInstance : public BaseInstance {
     void setCustomExecutables(const QList<GameExecutable>& list);
     QList<GameExecutable> customExecutables() const;
     GameExecutable executable(const QString& name) const;
+    /// What Launch starts: the user's choice, otherwise the automatic one
     QString defaultExecutableName() const;
+    /// The program the user picked in Settings, empty for automatic
+    QString chosenExecutableName() const;
+    /// The co-op launcher when installed (it starts the game with its script extender), else the script extender, else the game
+    QString automaticExecutableName() const;
     QString absoluteExecutablePath(const GameExecutable& exe) const;
 
     LaunchTask* createLaunchTask(const QString& executableName) override;
@@ -151,6 +156,13 @@ class GameInstance : public BaseInstance {
     static Result<> setProfileFoldersIsolated(bool isolated, const QString& shellFoldersKey = {});
 
    private:
+    /// Whether the game folder has @p path (relative to it), or an enabled mod that deployment will put there
+    bool provides(const QString& path) const;
+    /// Whether two executable paths (relative to the game folder or absolute) are the same file
+    bool sameProgram(const QString& a, const QString& b) const;
+    QString chosenExecutableName(const QList<GameExecutable>& all) const;
+    QString automaticExecutableName(const QList<GameExecutable>& all) const;
+
     std::unique_ptr<ModList> m_modList;
     std::unique_ptr<PluginList> m_pluginList;
 };

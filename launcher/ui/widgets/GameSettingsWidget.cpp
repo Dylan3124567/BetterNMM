@@ -96,7 +96,8 @@ QWidget* GameSettingsWidget::createGameTab()
     auto* launchBox = new QGroupBox(tr("Launching"), tab);
     auto* launchForm = new QFormLayout(launchBox);
     m_launchExecutable = new QComboBox(launchBox);
-    m_launchExecutable->setToolTip(tr("What the Launch button starts. A script extender is picked automatically once it is installed."));
+    m_launchExecutable->setToolTip(tr("What the Launch button starts. Automatic starts a co-op launcher (Skyrim Together and its forks) "
+                                      "or the script extender as soon as one is installed, otherwise the game itself."));
     m_arguments = new QLineEdit(launchBox);
     m_arguments->setToolTip(tr("Command line arguments for the game and its script extender. $INST_* variables are expanded."));
     launchForm->addRow(tr("Launch:"), m_launchExecutable);
@@ -258,10 +259,11 @@ void GameSettingsWidget::loadSettings()
         m_pluginFormat->setCurrentIndex(std::max(0, m_pluginFormat->findData(settings->get("PluginFormat").toString())));
         m_arguments->setText(settings->get("GameArguments").toString());
         m_launchExecutable->clear();
+        m_launchExecutable->addItem(tr("Automatic: %1").arg(m_instance->automaticExecutableName()), QString());
         for (const auto& exe : m_instance->executables()) {
-            m_launchExecutable->addItem(exe.name);
+            m_launchExecutable->addItem(exe.name, exe.name);
         }
-        m_launchExecutable->setCurrentText(m_instance->defaultExecutableName());
+        m_launchExecutable->setCurrentIndex(std::max(0, m_launchExecutable->findData(m_instance->chosenExecutableName())));
         m_executables->setRowCount(0);
         for (const auto& exe : m_instance->customExecutables()) {
             addExecutableRow(exe.name, QDir::toNativeSeparators(exe.path), exe.arguments, QDir::toNativeSeparators(exe.workingDir), exe.outputMod);
@@ -315,7 +317,8 @@ void GameSettingsWidget::saveSettings()
             }
         }
         m_instance->setCustomExecutables(tools);
-        settings->set("LaunchExecutable", m_launchExecutable->currentText());
+        settings->set("LaunchExecutable", m_launchExecutable->currentData().toString());
+        settings->set("LaunchChoiceVersion", 1);
         settings->set("OverrideConsole", m_consoleBox->isChecked());
         settings->set("OverrideGameTime", m_gameTimeBox->isChecked());
         settings->set("CountGameTime", m_countGameTime->isChecked());
