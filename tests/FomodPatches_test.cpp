@@ -28,6 +28,7 @@
 #include <FileSystem.h>
 #include <archive/ArchiveWriter.h>
 #include <game/FomodPatches.h>
+#include <game/GameFiles.h>
 #include <ui/SelfUpdate.h>
 
 // moc can not read raw string literals, so the fixtures live where it never looks
@@ -227,6 +228,7 @@ class FomodPatchesTest : public QObject {
         gone.archive = FS::PathCombine(m_dir.path(), "gone.zip");
         const auto check = FomodPatches::find({ gone }, plugins(g_others), {});
         QCOMPARE(check.unchecked, QStringList{ "Lights" });
+        QCOMPARE(check.uncheckedIds, QStringList{ "lights" });
         QVERIFY(check.patches.isEmpty());
     }
 
@@ -257,6 +259,44 @@ class FomodPatchesTest : public QObject {
         QVERIFY(file.setFileTime(time.addSecs(60), QFileDevice::FileModificationTime));
         file.close();
         QCOMPARE(FomodPatches::find({ copy }, states, cache).errors.size(), 1);
+    }
+
+    void test_kept_copy_uses_what_was_read()
+    {
+        QTemporaryDir dir;
+        auto download = m_mod;
+        download.archive = FS::PathCombine(dir.path(), "Downloads/Lights.zip");
+        QVERIFY(FS::ensureFilePathExists(download.archive));
+        QVERIFY(QFile::copy(m_mod.archive, download.archive));
+        const auto cache = FS::PathCombine(dir.path(), "cache");
+        const auto states = plugins(g_others);
+        const auto check = FomodPatches::find({ download }, states, cache);
+        QCOMPARE(check.withInstaller, QStringList{ "lights" });
+        const auto first = titles(check.patches);
+
+        // BetterNMM keeps its copy; what was read of the download counts for it
+        auto kept = download;
+        kept.archive = FS::PathCombine(dir.path(), "mods/.archives/lights/Lights.zip");
+        QVERIFY(GameFiles::keepArchive(download.archive, QFileInfo(kept.archive).absolutePath()).has_value());
+        FomodPatches::rememberAs(download.archive, kept.archive, cache);
+        QVERIFY(QFile::remove(download.archive));
+        // garbage in the kept copy (same size and time) goes unnoticed: it is not read again
+        QFile file(kept.archive);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        const auto time = file.fileTime(QFileDevice::FileModificationTime);
+        file.write(QByteArray(file.size(), 'x'));
+        QVERIFY(file.setFileTime(time, QFileDevice::FileModificationTime));
+        file.close();
+        QCOMPARE(titles(FomodPatches::find({ kept }, states, cache).patches), first);
+        // an archive with no XML installer is not among them
+        auto plain = m_mod;
+        plain.id = "plain";
+        plain.archive = FS::PathCombine(dir.path(), "plain.zip");
+        MMCZip::ArchiveWriter writer(plain.archive);
+        QVERIFY(writer.open().has_value());
+        QVERIFY(writer.addFile("Data/plain.esp", QByteArray("plain")).has_value());
+        QVERIFY(writer.close().has_value());
+        QVERIFY(FomodPatches::find({ plain }, states, {}).withInstaller.isEmpty());
     }
 
     void test_solid_archive_unpacked_only_up_to_what_is_needed()

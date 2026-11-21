@@ -63,6 +63,13 @@ Result<> removeTreeWhole(const QString& path);
 /// Moves a file within or across volumes, creating parent folders
 Result<> moveFile(const QString& src, const QString& dst);
 
+/**
+ * Keeps @p archive in @p folder as BetterNMM's own copy, which stays when the original is moved or deleted: a hard link
+ * when @p folder is on the same drive (no extra space), else a copy. Anything else in @p folder (the archive of an
+ * earlier version) goes. Returns the kept file. Setting @p cancel stops a copy and leaves @p folder as it was.
+ */
+Result<QString> keepArchive(const QString& archive, const QString& folder, const std::atomic_bool* cancel = nullptr);
+
 /// True when both paths name the same file on disk (hard links of each other)
 bool isSameFile(const QString& a, const QString& b);
 

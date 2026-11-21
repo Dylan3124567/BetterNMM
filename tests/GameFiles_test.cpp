@@ -873,6 +873,49 @@ class GameFilesTest : public QObject {
         QCOMPARE(readFile(FS::PathCombine(dir.path(), "overwritten/Data/textures/sky.dds")), QByteArray("vanilla sky"));
     }
 
+    void test_kept_archive_outlives_the_download()
+    {
+        QTemporaryDir dir;
+        const auto downloads = FS::PathCombine(dir.path(), "Downloads");
+        const auto store = FS::PathCombine(dir.path(), "mods/.archives/M");
+        const auto first = FS::PathCombine(downloads, "Mod-1.7z");
+        writeFile(first, "version 1");
+
+        auto kept = GameFiles::keepArchive(first, store);
+        QVERIFY2(kept.has_value(), qPrintable(kept ? QString() : kept.error()));
+        QCOMPARE(*kept, FS::PathCombine(store, "Mod-1.7z"));
+        // the same drive: a hard link, no second copy on disk
+        QVERIFY(GameFiles::isSameFile(first, *kept));
+        // the download deleted: BetterNMM's copy is still there
+        QVERIFY(QFile::remove(first));
+        QCOMPARE(readFile(*kept), QByteArray("version 1"));
+        // keeping what is kept already changes nothing
+        QCOMPARE(GameFiles::keepArchive(*kept, store).value_or(QString()), *kept);
+        QCOMPARE(readFile(*kept), QByteArray("version 1"));
+
+        // an update: its archive is kept and the old one goes
+        const auto second = FS::PathCombine(downloads, "Mod-2.7z");
+        writeFile(second, "version 2");
+        kept = GameFiles::keepArchive(second, store);
+        QVERIFY(kept.has_value());
+        QStringList names = QDir(store).entryList(QDir::Files | QDir::Hidden);
+        QCOMPARE(names, QStringList{ "Mod-2.7z" });
+
+        // another archive with the same name takes the place of the kept one
+        const auto other = FS::PathCombine(dir.path(), "elsewhere/Mod-2.7z");
+        writeFile(other, "another archive");
+        kept = GameFiles::keepArchive(other, store);
+        QVERIFY(kept.has_value());
+        QCOMPARE(readFile(*kept), QByteArray("another archive"));
+        names = QDir(store).entryList(QDir::Files | QDir::Hidden);
+        QCOMPARE(names, QStringList{ "Mod-2.7z" });  // and no ".part" left behind
+        QCOMPARE(readFile(second), QByteArray("version 2"));  // the download itself is never changed
+
+        // a missing archive is reported, and the kept one stays
+        QVERIFY(!GameFiles::keepArchive(FS::PathCombine(downloads, "gone.7z"), store).has_value());
+        QCOMPARE(QDir(store).entryList(QDir::Files | QDir::Hidden), QStringList{ "Mod-2.7z" });
+    }
+
     void test_tool_output_found_and_collected()
     {
         QTemporaryDir dir;

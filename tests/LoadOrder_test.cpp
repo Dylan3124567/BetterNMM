@@ -474,6 +474,61 @@ class LoadOrderTest : public QObject {
         QVERIFY(QFileInfo::exists(FS::PathCombine(mods, "B")));
     }
 
+    void test_archive_found_where_it_is()
+    {
+        QTemporaryDir dir;
+        const auto downloads = FS::PathCombine(dir.path(), "betternmm downloads");
+        const auto personal = FS::PathCombine(dir.path(), "Downloads");
+        const auto elsewhere = FS::PathCombine(dir.path(), "elsewhere/Mod-1-0.7z");
+        const QStringList folders{ downloads, personal };
+        ModEntry entry{ .id = "M", .name = "M", .archive = "Mod-1-0.7z" };
+
+        // nowhere
+        QCOMPARE(ModList::findArchive(entry, folders), QString());
+        // downloaded by hand: in the person's Downloads folder
+        writeFile(FS::PathCombine(personal, "Mod-1-0.7z"));
+        QCOMPARE(ModList::findArchive(entry, folders), FS::PathCombine(personal, "Mod-1-0.7z"));
+        // BetterNMM's downloads folder comes first
+        writeFile(FS::PathCombine(downloads, "Mod-1-0.7z"));
+        QCOMPARE(ModList::findArchive(entry, folders), FS::PathCombine(downloads, "Mod-1-0.7z"));
+        // and where it was installed from before both
+        writeFile(elsewhere);
+        entry.archivePath = elsewhere;
+        QCOMPARE(ModList::findArchive(entry, folders), elsewhere);
+        // moved away from there: the folders again
+        QVERIFY(QFile::remove(elsewhere));
+        QCOMPARE(ModList::findArchive(entry, folders), FS::PathCombine(downloads, "Mod-1-0.7z"));
+        // a mod with no archive recorded is never matched to a folder
+        QCOMPARE(ModList::findArchive(ModEntry{ .id = "N" }, { downloads }), QString());
+
+        // the path is kept with the mod
+        const auto mods = FS::PathCombine(dir.path(), "mods");
+        writeFile(FS::PathCombine(mods, "M/Data/m.esp"));
+        const auto file = FS::PathCombine(dir.path(), "mods.json");
+        {
+            ModList list(mods, file);
+            QVERIFY(list.load().has_value());
+            entry.archivePath.clear();
+            list.upsert(entry);
+            QVERIFY(list.mods()[0].archivePath.isEmpty());
+            list.setArchivePath("M", elsewhere);
+        }
+        ModList reloaded(mods, file);
+        QVERIFY(reloaded.load().has_value());
+        QCOMPARE(reloaded.mods()[0].archivePath, elsewhere);
+        QCOMPARE(reloaded.mods()[0].archive, QString("Mod-1-0.7z"));
+
+        // the kept archives are in the mods folder but never a mod; removing the mod removes its kept archive
+        const auto store = reloaded.archiveStore("M");
+        QVERIFY(store.startsWith(mods));
+        writeFile(FS::PathCombine(store, "Mod-1-0.7z"));
+        QVERIFY(reloaded.load().has_value());
+        QCOMPARE(reloaded.mods().size(), 1);
+        QVERIFY(reloaded.remove({ 0 }).has_value());
+        QVERIFY(!QFileInfo::exists(store));
+        QVERIFY(!QFileInfo::exists(FS::PathCombine(mods, "M")));
+    }
+
     void test_hidden_files()
     {
         QTemporaryDir dir;

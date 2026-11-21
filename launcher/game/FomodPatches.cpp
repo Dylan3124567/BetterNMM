@@ -514,6 +514,8 @@ Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& c
     struct Outcome {
         QList<Patch> patches;
         QString unchecked;
+        QString uncheckedId;
+        bool installer = false;
         QString error;
     };
     std::atomic<int> done = 0;
@@ -523,9 +525,11 @@ Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& c
         Outcome outcome;
         if (mod.archive.isEmpty() || !QFileInfo(mod.archive).isFile()) {
             outcome.unchecked = mod.name;
+            outcome.uncheckedId = mod.id;
         } else if (auto source = load(mod.archive, cacheDir); !source) {
             outcome.error = QObject::tr("%1: %2").arg(mod.name, source.error());
         } else if (*source) {
+            outcome.installer = true;
             checkMod(mod, **source, fileState, outcome.patches);
         }
         if (progress) {
@@ -534,16 +538,31 @@ Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& c
         return outcome;
     });
     Check check;
+    for (int i = 0; i < outcomes.size(); i++) {
+        if (outcomes[i].installer) {
+            check.withInstaller << mods[i].id;
+        }
+    }
     for (const auto& outcome : outcomes) {
         check.patches << outcome.patches;
         if (!outcome.unchecked.isEmpty()) {
             check.unchecked << outcome.unchecked;
+            check.uncheckedIds << outcome.uncheckedId;
         }
         if (!outcome.error.isEmpty()) {
             check.errors << outcome.error;
         }
     }
     return check;
+}
+
+void rememberAs(const QString& archive, const QString& copy, const QString& cacheDir)
+{
+    const auto from = cachePath(cacheDir, archive);
+    const auto to = cachePath(cacheDir, copy);
+    if (!from.isEmpty() && QFileInfo::exists(from) && !QFileInfo::exists(to)) {
+        QFile::copy(from, to);
+    }
 }
 
 void remember(const QString& archive, const QString& extractedDir, const QString& cacheDir)

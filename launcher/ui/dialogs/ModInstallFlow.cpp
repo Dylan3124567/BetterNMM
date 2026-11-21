@@ -103,6 +103,36 @@ bool refuseWhileRunning(GameInstance* instance, QWidget* parent)
     return true;
 }
 
+/// Runs work on a worker thread as a task, so a progress dialog shows while it runs. The work is given a function to
+/// report how much of how much it has done, from any thread.
+template <typename T>
+class WorkerTask : public Task {
+   public:
+    using Progress = std::function<void(int, int)>;
+    WorkerTask(QString status, std::function<T(const Progress&)> work) : m_status(std::move(status)), m_work(std::move(work)) {}
+    const T& result() const { return m_result; }
+
+   protected:
+    void executeTask() override
+    {
+        setStatus(m_status);
+        connect(&m_watcher, &QFutureWatcher<T>::finished, this, [this] {
+            m_result = m_watcher.result();
+            emitSucceeded();
+        });
+        Progress progress = [this](int done, int total) {
+            QMetaObject::invokeMethod(this, [this, done, total] { setProgress(done, total); }, Qt::QueuedConnection);
+        };
+        m_watcher.setFuture(QtConcurrent::run([work = m_work, progress] { return work(progress); }));
+    }
+
+   private:
+    QString m_status;
+    std::function<T(const Progress&)> m_work;
+    QFutureWatcher<T> m_watcher;
+    T m_result;
+};
+
 bool runTask(Task* task, QWidget* parent, const QString& errorTitle)
 {
     ProgressDialog dialog(parent);
@@ -217,6 +247,14 @@ QString nameFromArchive(const QString& archive, int modId)
         }
     }
     return base.trimmed();
+}
+
+/// Where the archive of mod @p id is looked for when it is not where it was installed from: BetterNMM's own copy (found
+/// by name, so it is found after the instance moved), BetterNMM's downloads folder, then the person's Downloads folder,
+/// where a mod downloaded by hand usually is
+QStringList archiveFolders(GameInstance* instance, const QString& id)
+{
+    return { instance->modList()->archiveStore(id), instance->downloadsDir(), QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) };
 }
 
 }  // namespace
@@ -508,11 +546,6 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
             return false;
         }
     }
-    // Check Patches only looks in the downloads folder for archives (the downloads folder and the cache are BetterNMM's
-    // settings, which an install outside it has not got)
-    if (APPLICATION_DYN && QFileInfo(archive).dir() == QDir(instance->downloadsDir())) {
-        FomodPatches::remember(archive, extracted, patchCache());
-    }
 
     const auto analysis = ModInstaller::analyze(extracted, game, instance->gameRoot());
     if (metadata.name.isEmpty()) {
@@ -657,6 +690,29 @@ bool installArchive(GameInstance* instance, const QString& archive, ModEntry met
     metadata.id = id;
     metadata.enabled = true;
     metadata.archive = QFileInfo(archive).fileName();
+    metadata.archivePath = QFileInfo(archive).absoluteFilePath();
+    if (!analysis.fomodConfig.isEmpty()) {
+        // Check Patches and Change Installer Options read the installer again later, so BetterNMM keeps its own copy of
+        // the archive: the downloaded file can be moved or deleted
+        WorkerTask<Result<QString>> keeping(QObject::tr("Keeping %1 for its installer").arg(metadata.archive),
+                                            [archive, folder = mods->archiveStore(id)](const auto&) { return GameFiles::keepArchive(archive, folder); });
+        runTask(&keeping, parent, QObject::tr("Installing %1").arg(metadata.name));
+        if (const auto& kept = keeping.result(); kept) {
+            metadata.archivePath = *kept;
+        } else {
+            showError(parent, QObject::tr("Installing %1").arg(metadata.name),
+                      QObject::tr("%1 is installed, but BetterNMM could not keep a copy of %2 (%3). Check Patches and Change Installer "
+                                  "Options read it where it is, as long as it stays there.")
+                          .arg(metadata.name, metadata.archive, kept.error()));
+        }
+    } else if (const auto store = mods->archiveStore(id); QFileInfo::exists(store)) {
+        // what this mod had before came with an installer; this one has none to read again
+        FS::deletePath(store);
+    }
+    // the patch cache is in BetterNMM's data folder, which a test run has not got
+    if (APPLICATION_DYN) {
+        FomodPatches::remember(metadata.archivePath, extracted, patchCache());
+    }
     metadata.stamp = QDateTime::currentMSecsSinceEpoch();
     const bool isNew = mods->indexOf(id) < 0;
     mods->upsert(metadata);
@@ -687,11 +743,13 @@ bool changeInstallerOptions(GameInstance* instance, const QString& modId, QWidge
         return false;
     }
     const auto entry = instance->modList()->mods()[row];
-    auto archive = entry.archive.isEmpty() ? QString() : FS::PathCombine(instance->downloadsDir(), entry.archive);
-    if (archive.isEmpty() || !QFileInfo(archive).isFile()) {
+    auto archive = ModList::findArchive(entry, archiveFolders(instance, entry.id));
+    if (archive.isEmpty()) {
         const auto why = entry.archive.isEmpty()
                              ? QObject::tr("BetterNMM does not know which archive %1 was installed from.").arg(entry.name)
-                             : QObject::tr("%1 was installed from %2, which is not in the downloads folder any more.").arg(entry.name, entry.archive);
+                             : QObject::tr("BetterNMM can not find %2, the archive %1 was installed from: it is not where it was then, "
+                                           "in BetterNMM's downloads folder or in your Downloads folder.")
+                                   .arg(entry.name, entry.archive);
         if (QMessageBox::question(parent, title, why + "\n\n" + QObject::tr("Choose the archive to run its installer from?")) != QMessageBox::Yes) {
             return false;
         }
@@ -1165,36 +1223,6 @@ bool autoSort(GameInstance* instance, QWidget* parent)
 
 namespace {
 
-/// Runs work on a worker thread as a task, so a progress dialog shows while it runs. The work is given a function to
-/// report how much of how much it has done, from any thread.
-template <typename T>
-class WorkerTask : public Task {
-   public:
-    using Progress = std::function<void(int, int)>;
-    WorkerTask(QString status, std::function<T(const Progress&)> work) : m_status(std::move(status)), m_work(std::move(work)) {}
-    const T& result() const { return m_result; }
-
-   protected:
-    void executeTask() override
-    {
-        setStatus(m_status);
-        connect(&m_watcher, &QFutureWatcher<T>::finished, this, [this] {
-            m_result = m_watcher.result();
-            emitSucceeded();
-        });
-        Progress progress = [this](int done, int total) {
-            QMetaObject::invokeMethod(this, [this, done, total] { setProgress(done, total); }, Qt::QueuedConnection);
-        };
-        m_watcher.setFuture(QtConcurrent::run([work = m_work, progress] { return work(progress); }));
-    }
-
-   private:
-    QString m_status;
-    std::function<T(const Progress&)> m_work;
-    QFutureWatcher<T> m_watcher;
-    T m_result;
-};
-
 /**
  * Gets Nemesis ready after a deploy, when the instance has it (see Nemesis::prepare): its settings and the patches mods
  * brought ticked, its engine updated when its patches changed, and a Launch menu entry that runs it in the instance.
@@ -1267,7 +1295,7 @@ FomodPatches::Mod patchMod(GameInstance* instance, const ModEntry& entry)
     const auto dataPath = instance->definition().dataPath;
     return FomodPatches::Mod{ .id = entry.id,
                               .name = entry.name,
-                              .archive = entry.archive.isEmpty() ? QString() : FS::PathCombine(instance->downloadsDir(), entry.archive),
+                              .archive = ModList::findArchive(entry, archiveFolders(instance, entry.id)),
                               .folder = dataPath.isEmpty() ? dir : FS::PathCombine(dir, dataPath),
                               .choices = entry.choices };
 }
@@ -1333,6 +1361,260 @@ void addPatches(GameInstance* instance, const QList<FomodPatches::Patch>& patche
 
 }  // namespace
 
+/// Asks for a folder that has the archives of the mods @p ids (in it or below it) and remembers where each one is;
+/// how many were found
+int lookForArchives(GameInstance* instance, const QStringList& ids, QWidget* parent)
+{
+    const auto title = QObject::tr("Look for archives");
+    const auto folder = QFileDialog::getExistingDirectory(parent, QObject::tr("Folder with the mods' archives"),
+                                                          QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    if (folder.isEmpty()) {
+        return 0;
+    }
+    auto* mods = instance->modList();
+    QHash<QString, QStringList> wanted;  // lower-case archive name -> ids of the mods installed from it
+    for (const auto& id : ids) {
+        if (const int row = mods->indexOf(id); row >= 0 && !mods->mods()[row].archive.isEmpty()) {
+            wanted[mods->mods()[row].archive.toLower()] << id;
+        }
+    }
+    WorkerTask<QHash<QString, QString>> search(QObject::tr("Looking for archives in %1").arg(QDir::toNativeSeparators(folder)),
+                                               [folder, names = QSet<QString>(wanted.keyBegin(), wanted.keyEnd())](const auto&) {
+                                                   QHash<QString, QString> found;  // lower-case name -> path
+                                                   for (const auto& entry : QDirListing(folder, QDirListing::IteratorFlag::Recursive |
+                                                                                                    QDirListing::IteratorFlag::FilesOnly)) {
+                                                       const auto name = entry.fileName().toLower();
+                                                       if (names.contains(name) && !found.contains(name)) {
+                                                           found.insert(name, entry.absoluteFilePath());
+                                                           if (found.size() == names.size()) {
+                                                               break;
+                                                           }
+                                                       }
+                                                   }
+                                                   return found;
+                                               });
+    if (!runTask(&search, parent, title)) {
+        return 0;
+    }
+    int count = 0;
+    for (auto it = search.result().cbegin(); it != search.result().cend(); ++it) {
+        for (const auto& id : wanted.value(it.key())) {
+            mods->setArchivePath(id, it.value());
+            count++;
+        }
+    }
+    if (count == 0) {
+        CustomMessageBox::selectable(parent, title,
+                                     QObject::tr("None of the archives are in %1 or its folders.").arg(QDir::toNativeSeparators(folder)),
+                                     QMessageBox::Information)
+            ->exec();
+    }
+    return count;
+}
+
+/// Downloads one Nexus Mods file to @p target without installing it; Premium members only (Nexus Mods hands others files
+/// through its website)
+void downloadOnly(const QString& game, const ModEntry& metadata, const Nexus::ModFile& file, const QString& target, QWidget* parent)
+{
+    auto job = makeShared<NetJob>(QObject::tr("Nexus Mods file %1").arg(file.fileId), APPLICATION->network());
+    auto [linkRequest, links] = Net::ApiRequest::makeByteArray(Nexus::downloadLinkUrl(game, metadata.nexusModId, file.fileId));
+    job->addNetAction(linkRequest);
+    job->setAskRetry(false);
+    QPointer<QWidget> owner(parent);
+    startLookup(job, [linkRequest, links, owner, metadata, size = file.size, target] {
+        const auto title = QObject::tr("Nexus Mods download failed");
+        const auto linkList = linkRequest->wasSuccessful() ? Nexus::parseDownloadLinks(*links) : Result<QList<Nexus::DownloadLink>>{};
+        if (!linkRequest->wasSuccessful() || !linkList || linkList->isEmpty()) {
+            const int status = linkRequest->replyStatusCode();
+            const auto why = !linkRequest->wasSuccessful() ? (status > 0 ? Nexus::errorMessage(status, {}) : linkRequest->failReason())
+                             : linkList                    ? QObject::tr("Nexus Mods gave no download address.")
+                                                           : linkList.error();
+            CustomMessageBox::selectable(dialogParent(owner), title, QObject::tr("%1: %2").arg(metadata.name, why), QMessageBox::Critical)->show();
+            return;
+        }
+        DownloadItem download;  // no instance: only downloaded
+        download.url = linkList->first().url;
+        download.target = target;
+        download.size = size;
+        download.metadata = metadata;
+        APPLICATION->downloads()->add(download);
+    });
+}
+
+/**
+ * Downloads again from Nexus Mods the archives of the mods @p ids, which are gone, so their installers can be read: the
+ * very files they were installed from, found by the Nexus Mods ids BetterNMM recorded or by the archives' names. They
+ * are only downloaded; the next Check Patches keeps BetterNMM's own copy of each.
+ */
+void downloadArchivesAgain(GameInstance* instance, const QStringList& ids, QWidget* parent)
+{
+    const auto title = QObject::tr("Download archives again");
+    auto* mods = instance->modList();
+    struct Wanted {
+        ModEntry entry;
+        QString game;
+        QList<int> candidates;
+        int modId = 0;
+        Nexus::ModFile file;
+    };
+    QList<Wanted> wanted;
+    QStringList unknown;
+    QMap<QString, QList<int>> byGame;
+    for (const auto& id : ids) {
+        const int row = mods->indexOf(id);
+        if (row < 0) {
+            continue;
+        }
+        Wanted want{ .entry = mods->mods()[row] };
+        want.game = want.entry.nexusGame.isEmpty() ? instance->definition().domain : want.entry.nexusGame;
+        want.candidates = want.entry.nexusModId > 0 ? QList<int>{ want.entry.nexusModId } : Nexus::modIdsInArchiveName(want.entry.archive);
+        if (want.candidates.isEmpty() || want.game.isEmpty()) {
+            unknown << want.entry.name;
+            continue;
+        }
+        for (const int candidate : std::as_const(want.candidates)) {
+            if (!byGame[want.game].contains(candidate)) {
+                byGame[want.game] << candidate;
+            }
+        }
+        wanted << want;
+    }
+    for (auto it = byGame.cbegin(); it != byGame.cend(); ++it) {
+        const auto details = fetchModDetails(it.key(), it.value(), parent);
+        if (!details) {
+            showError(parent, title, details.error());
+            return;
+        }
+        if (details->isEmpty()) {
+            continue;  // none of them is on Nexus Mods (any more)
+        }
+        const auto files = fetchModFiles(details->first().gameId, it.value(), parent);
+        if (!files) {
+            showError(parent, title, files.error());
+            return;
+        }
+        for (auto& want : wanted) {
+            if (want.game != it.key() || want.modId > 0) {
+                continue;
+            }
+            for (const int candidate : std::as_const(want.candidates)) {
+                const auto modFiles = files->value(candidate);
+                std::optional<Nexus::ModFile> found;
+                for (const auto& file : modFiles) {
+                    if (want.entry.nexusFileId > 0 && file.fileId == want.entry.nexusFileId) {
+                        found = file;
+                    }
+                }
+                if (!found && !want.entry.archive.isEmpty()) {
+                    found = Nexus::fileForArchive(want.entry.archive, modFiles);
+                }
+                if (found) {
+                    want.modId = candidate;
+                    want.file = *found;
+                    break;
+                }
+            }
+        }
+    }
+    QList<Wanted> found;
+    for (const auto& want : wanted) {
+        if (want.modId > 0) {
+            found << want;
+        } else {
+            unknown << want.entry.name;
+        }
+    }
+    if (found.isEmpty()) {
+        showError(parent, title,
+                  QObject::tr("Nexus Mods does not have the files these mods were installed from (any more), or BetterNMM can not tell "
+                              "which they are: %1")
+                      .arg(unknown.join(", ")));
+        return;
+    }
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* intro = new QLabel(QObject::tr("These are the files from Nexus Mods that the mods were installed from. The checked ones are "
+                                         "downloaded again, only downloaded: run Check Patches once they are there, and BetterNMM "
+                                         "keeps its own copy of each, so the downloads can be deleted after that."));
+    intro->setWordWrap(true);
+    layout->addWidget(intro);
+    auto* list = new QListWidget;
+    for (int i = 0; i < found.size(); i++) {
+        const auto& want = found[i];
+        auto* item = new QListWidgetItem(QObject::tr("%1 (%2, %3)")
+                                             .arg(want.entry.name, want.entry.archive.isEmpty() ? want.file.name : want.entry.archive,
+                                                  StringUtils::humanReadableFileSize(static_cast<double>(want.file.size))),
+                                         list);
+        item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
+        item->setCheckState(Qt::Checked);
+        item->setData(Qt::UserRole, i);
+    }
+    layout->addWidget(list);
+    auto* total = new QLabel;
+    layout->addWidget(total);
+    if (!unknown.isEmpty()) {
+        auto* label = new QLabel(QObject::tr("Not on Nexus Mods (any more), or not recognised: %1").arg(unknown.join(", ")));
+        label->setWordWrap(true);
+        layout->addWidget(label);
+    }
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Cancel);
+    auto* download = buttons->addButton(QObject::tr("&Download"), QDialogButtonBox::AcceptRole);
+    const auto update = [&] {
+        qint64 bytes = 0;
+        int count = 0;
+        for (int i = 0; i < list->count(); i++) {
+            if (list->item(i)->checkState() == Qt::Checked) {
+                bytes += found[list->item(i)->data(Qt::UserRole).toInt()].file.size;
+                count++;
+            }
+        }
+        total->setText(QObject::tr("%n file(s), %1 in all", "", count).arg(StringUtils::humanReadableFileSize(static_cast<double>(bytes))));
+        download->setEnabled(count > 0);
+    };
+    update();
+    QObject::connect(list, &QListWidget::itemChanged, &dialog, update);
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+    dialog.resize(640, 380);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const auto folder = instance->downloadsDir();
+    const bool direct = APPLICATION->accounts()->isPremium() && !APPLICATION->accounts()->apiKey().isEmpty();
+    QList<NexusDownloadQueue::Request> requests;
+    for (int i = 0; i < list->count(); i++) {
+        if (list->item(i)->checkState() != Qt::Checked) {
+            continue;
+        }
+        const auto& want = found[list->item(i)->data(Qt::UserRole).toInt()];
+        // under the name it was installed from, so it is found by that name as well
+        const auto name = want.entry.archive.isEmpty() ? want.file.fileName : want.entry.archive;
+        ModEntry metadata{ .name = want.entry.name, .version = want.file.version, .nexusGame = want.game, .nexusModId = want.modId, .nexusFileId = want.file.fileId };
+        if (!name.isEmpty()) {
+            mods->setArchivePath(want.entry.id, FS::PathCombine(folder, name));
+        }
+        if (direct && !name.isEmpty()) {
+            downloadOnly(want.game, metadata, want.file, FS::PathCombine(folder, name), parent);
+            continue;
+        }
+        NexusDownloadQueue::Request request;  // no instance: only downloaded
+        request.page = Nexus::fileDownloadPageUrl(want.game, want.modId, want.file.fileId);
+        request.title = QString("%1 (%2)").arg(want.entry.name, name.isEmpty() ? want.file.name : name);
+        request.downloadDir = folder;
+        request.fileName = name;
+        request.size = want.file.size;
+        request.metadata = metadata;
+        requests << request;
+    }
+    if (!requests.isEmpty()) {
+        APPLICATION->nexusDownloads()->add(requests, parent);
+    }
+}
+
 void checkPatches(GameInstance* instance, QWidget* parent)
 {
     const auto title = QObject::tr("Check patches");
@@ -1358,19 +1640,76 @@ void checkPatches(GameInstance* instance, QWidget* parent)
     const auto check = reading.result();
 
     QStringList notes;
+    // mods installed before BetterNMM kept its own copy of installer archives get one now, while the archive is there
+    QList<std::pair<QString, QString>> unkept;  // mod id -> archive found
+    for (const auto& id : check.withInstaller) {
+        const int row = instance->modList()->indexOf(id);
+        if (row < 0) {
+            continue;
+        }
+        const auto& entry = instance->modList()->mods()[row];
+        const auto found = ModList::findArchive(entry, archiveFolders(instance, id));
+        const auto store = instance->modList()->archiveStore(id);
+        if (!found.isEmpty() && QDir(QFileInfo(found).absolutePath()) != QDir(store)) {
+            unkept << std::pair{ id, found };
+        }
+    }
+    if (!unkept.isEmpty()) {
+        WorkerTask<QList<Result<QString>>> keeping(
+            QObject::tr("Keeping the archives of %n mod(s) for their installers", "", static_cast<int>(unkept.size())),
+            [unkept, stores = [&] {
+                QStringList out;
+                for (const auto& [id, found] : unkept) {
+                    out << instance->modList()->archiveStore(id);
+                }
+                return out;
+            }()](const auto& progress) {
+                QList<Result<QString>> out;
+                for (int i = 0; i < unkept.size(); i++) {
+                    out << GameFiles::keepArchive(unkept[i].second, stores[i]);
+                    progress(i + 1, static_cast<int>(unkept.size()));
+                }
+                return out;
+            });
+        runTask(&keeping, parent, title);
+        for (int i = 0; i < keeping.result().size(); i++) {
+            const auto& [id, found] = unkept[i];
+            if (const auto& kept = keeping.result()[i]; kept) {
+                FomodPatches::rememberAs(found, *kept, patchCache());
+                instance->modList()->setArchivePath(id, *kept);
+            } else {
+                notes << QObject::tr("Could not keep a copy of %1: %2").arg(QDir::toNativeSeparators(found), kept.error());
+            }
+        }
+    }
     if (!check.unchecked.isEmpty()) {
-        notes << QObject::tr("Not checked, because their archive is not in the downloads folder: %1").arg(check.unchecked.join(", "));
+        notes << QObject::tr("Not checked, because their archive is not where they were installed from, in BetterNMM's downloads folder "
+                             "or in your Downloads folder: %1. Look in Folder finds them anywhere else; Download Again gets them "
+                             "from Nexus Mods once more.")
+                     .arg(check.unchecked.join(", "));
     }
     if (!check.errors.isEmpty()) {
         notes << QObject::tr("Could not be read:\n%1").arg(check.errors.join("\n"));
     }
+    const auto lookAndCheckAgain = [&] {
+        if (lookForArchives(instance, check.uncheckedIds, parent) > 0) {
+            checkPatches(instance, parent);
+        }
+    };
     if (check.patches.isEmpty()) {
-        CustomMessageBox::selectable(
+        auto* box = CustomMessageBox::selectable(
             parent, title,
             (QStringList{ QObject::tr("No missing patches: the installers of your mods recommend nothing more for the mods you have.") } + notes)
                 .join("\n\n"),
-            QMessageBox::Information)
-            ->exec();
+            QMessageBox::Information, QMessageBox::Close);
+        auto* look = check.uncheckedIds.isEmpty() ? nullptr : box->addButton(QObject::tr("&Look in Folder..."), QMessageBox::ActionRole);
+        auto* again = check.uncheckedIds.isEmpty() ? nullptr : box->addButton(QObject::tr("&Download Again..."), QMessageBox::ActionRole);
+        box->exec();
+        if (look && box->clickedButton() == look) {
+            lookAndCheckAgain();
+        } else if (again && box->clickedButton() == again) {
+            downloadArchivesAgain(instance, check.uncheckedIds, parent);
+        }
         return;
     }
 
@@ -1405,6 +1744,15 @@ void checkPatches(GameInstance* instance, QWidget* parent)
     }
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     auto* add = buttons->addButton(QObject::tr("&Add Checked"), QDialogButtonBox::AcceptRole);
+    // the archives found, the check runs again with them
+    constexpr int lookResult = 2;
+    constexpr int downloadResult = 3;
+    if (!check.uncheckedIds.isEmpty()) {
+        auto* look = buttons->addButton(QObject::tr("&Look in Folder..."), QDialogButtonBox::ActionRole);
+        QObject::connect(look, &QPushButton::clicked, &dialog, [&dialog] { dialog.done(lookResult); });
+        auto* again = buttons->addButton(QObject::tr("&Download Again..."), QDialogButtonBox::ActionRole);
+        QObject::connect(again, &QPushButton::clicked, &dialog, [&dialog] { dialog.done(downloadResult); });
+    }
     QObject::connect(list, &QListWidget::itemChanged, add, [list, add] {
         bool any = false;
         for (int i = 0; i < list->count(); i++) {
@@ -1416,7 +1764,16 @@ void checkPatches(GameInstance* instance, QWidget* parent)
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
     dialog.resize(720, 420);
-    if (dialog.exec() != QDialog::Accepted) {
+    const int result = dialog.exec();
+    if (result == lookResult) {
+        lookAndCheckAgain();
+        return;
+    }
+    if (result == downloadResult) {
+        downloadArchivesAgain(instance, check.uncheckedIds, parent);
+        return;
+    }
+    if (result != QDialog::Accepted) {
         return;
     }
     QList<FomodPatches::Patch> chosen;

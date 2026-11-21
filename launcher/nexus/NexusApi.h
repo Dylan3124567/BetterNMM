@@ -26,6 +26,7 @@
 #include <QUrl>
 
 #include <functional>
+#include <optional>
 
 #include "Result.h"
 #include "nexus/NexusAccount.h"
@@ -180,6 +181,17 @@ Result<QList<GameInfo>> parseGames(const QByteArray& json);
 
 /// Ranks files for "install the newest main file": primary first, then MAIN, then newest
 ModFile bestFile(const QList<ModFile>& files);
+
+/**
+ * The Nexus Mods mods an archive's name may come from, likeliest first: in "Name-1234-1-0-1700000000.7z" (an older
+ * file's own name) every number between dashes, in "Name 1234 1.0 2026-01-01T12-30Z code.7z" (how Nexus Mods names
+ * newer files) the number before the version. fileForArchive tells which one it is.
+ */
+QList<int> modIdsInArchiveName(const QString& archiveName);
+
+/// The file of a mod (@p files) an archive of that name was downloaded as: an older file by its own name, a newer one by
+/// the upload time in the name; nullopt when none matches
+std::optional<ModFile> fileForArchive(const QString& archiveName, const QList<ModFile>& files);
 
 /**
  * Picks the script extender build for @p gameVersion (the executable's "1.7.104.0") from the extender mod's files: the best

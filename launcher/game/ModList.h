@@ -36,6 +36,7 @@ struct ModEntry {
     int nexusFileId = 0;
     QString latestVersion;  ///< from the last update check
     QString archive;        ///< file name of the archive it was installed from
+    QString archivePath;    ///< where that archive was when it was installed; it may have moved since
     qint64 stamp = 0;       ///< install time in ms since epoch; changes when the files change
     QList<QStringList> choices;  ///< options picked in its FOMOD installer, as {step, group, option} names
     bool ignoreUpdates = false;  ///< newer versions are not pointed out or installed by Update
@@ -58,6 +59,8 @@ class ModList : public QAbstractTableModel {
 
     QString modsDir() const { return m_modsDir; }
     QString modDir(const QString& id) const;
+    /// Where BetterNMM keeps its own copy of the archive of mod @p id (see GameFiles::keepArchive); hidden from the mods
+    QString archiveStore(const QString& id) const;
     const QList<ModEntry>& mods() const { return m_mods; }
     QList<ModEntry> enabledMods() const;
     int indexOf(const QString& id) const;
@@ -75,10 +78,14 @@ class ModList : public QAbstractTableModel {
     void moveRows(QList<int> rows, int offset);
     /// Puts the mods in the order of @p ids (any not named stay after them)
     void setOrder(const QStringList& ids);
-    /// Deletes the mods and their files; a separator goes alone, its mods stay
+    /// Deletes the mods, their files and their kept archives; a separator goes alone, its mods stay
     Result<> remove(const QList<int>& rows);
     void setLatestVersion(const QString& id, const QString& version);
     void setIgnoreUpdates(const QList<int>& rows, bool ignore);
+    void setArchivePath(const QString& id, const QString& path);
+    /// The archive @p entry was installed from: where it was then, or else a file of its name in the first of @p folders
+    /// that has one; empty when it is nowhere
+    static QString findArchive(const ModEntry& entry, const QStringList& folders);
 
     /// Inserts a separator called @p name before @p row (at the end when @p row is out of range); returns its row
     int addSeparator(const QString& name, int row);

@@ -70,7 +70,8 @@ ExportInstanceDialog::ExportInstanceDialog(BaseInstance* instance, QWidget* pare
     m_proxyModel = new FileIgnoreProxy(root, this);
     m_proxyModel->setSourceModel(model);
     // the game folder is rebuilt from the importer's own installation, and deployment state belongs to this machine
-    for (auto path : { "game", "overwritten", "deployment.json", "base.json" }) {
+    // the archives BetterNMM keeps for installers stay with this PC; an export would be as big as all of them
+    for (auto path : { "game", "overwritten", "deployment.json", "base.json", "mods/.archives" }) {
         m_proxyModel->ignoreFilesWithPath().insert(path);
     }
     m_proxyModel->ignoreFilesWithName().append({ ".DS_Store", "thumbs.db", "Thumbs.db" });

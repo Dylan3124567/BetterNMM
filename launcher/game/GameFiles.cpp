@@ -289,6 +289,32 @@ Result<> moveFile(const QString& src, const QString& dst)
     return removeFile(src);
 }
 
+Result<QString> keepArchive(const QString& archive, const QString& folder, const std::atomic_bool* cancel)
+{
+    const auto target = FS::PathCombine(folder, QFileInfo(archive).fileName());
+    if (!QFileInfo::exists(target) || !isSameFile(archive, target)) {
+        // placed beside the target first, so a failed or cancelled copy never passes for the archive
+        const auto part = target + ".part";
+        if (QFileInfo::exists(part)) {
+            TRY(removeFile(part));
+        }
+        if (auto placed = placeFile(archive, part, PlaceMode::Link, cancel); !placed) {
+            QFile::remove(part);
+            return std::unexpected(placed.error());
+        }
+        if (QFileInfo::exists(target)) {
+            TRY(removeFile(target));  // another file of that name: the new archive wins
+        }
+        TRY(moveFile(part, target));
+    }
+    for (const auto& entry : QDirListing(folder, QDirListing::IteratorFlag::FilesOnly | QDirListing::IteratorFlag::IncludeHidden)) {
+        if (entry.fileName().compare(QFileInfo(target).fileName(), Qt::CaseInsensitive) != 0) {
+            TRY(removeFile(entry.absoluteFilePath()));
+        }
+    }
+    return target;
+}
+
 #ifdef Q_OS_WIN
 static bool fileId(const QString& path, BY_HANDLE_FILE_INFORMATION& out)
 {

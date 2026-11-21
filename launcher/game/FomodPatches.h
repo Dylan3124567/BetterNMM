@@ -57,7 +57,9 @@ struct Patch {
 
 struct Check {
     QList<Patch> patches;
-    QStringList unchecked;  ///< mods whose archive is not in the downloads folder (anymore)
+    QStringList unchecked;    ///< names of the mods whose archive is not where Mod::archive says (or it says nothing)
+    QStringList uncheckedIds; ///< and their ids
+    QStringList withInstaller;  ///< ids of the mods whose archive has an XML installer
     QStringList errors;     ///< "Mod: reason" for archives or installers that could not be read
 };
 
@@ -78,6 +80,9 @@ Check find(const QList<Mod>& mods, const FileStates& fileState, const QString& c
  * reads them no slower than this would.
  */
 void remember(const QString& archive, const QString& extractedDir, const QString& cacheDir);
+
+/// What @p cacheDir has of @p archive, kept for @p copy too (the same archive somewhere else), so it is not read again
+void rememberAs(const QString& archive, const QString& copy, const QString& cacheDir);
 
 struct Installed {
     QList<QStringList> choices;  ///< the mod's installer options now, for Mod::choices

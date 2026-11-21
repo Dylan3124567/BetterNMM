@@ -179,7 +179,13 @@ isolated instance of the game installation Vortex manages, with:
    **Change Installer Options** runs the selected mod's FOMOD installer again with the options it has now already
    picked (those you chose, or for an older install the ones its files show) and installs it anew with your changes, in
    the same place in the list. **Check Patches** finds compatibility patches the installers of your mods offer for the
-   other mods you have, and adds the ones you tick.
+   other mods you have, and adds the ones you tick. Both read the mod's installer again, so BetterNMM keeps its own copy
+   of every archive with a FOMOD installer in the instance's `mods\.archives` folder: a hard link when the archive is on
+   the same drive (no extra space), a copy otherwise. Moving or deleting your downloads changes nothing, and removing a
+   mod removes its copy. Mods installed before 1.2.1 get theirs the first time Check Patches finds their archive (where
+   they were installed from, in BetterNMM's downloads folder or in your Downloads folder; **Look in Folder** finds it
+   anywhere else). An archive deleted before that can be fetched with **Download Again**: it finds the very file on Nexus
+   Mods (by the ids BetterNMM recorded or by the archive's name) and only downloads it, for the next check to keep.
    **Auto Sort** orders everything in one click:
    - Plugins (Skyrim Special Edition, Skyrim, Fallout 4, Fallout: New Vegas, Fallout 3, Oblivion, Starfield) are sorted
      the way LOOT 0.29 sorts them: BetterNMM carries its own port of LOOT's sorter (masters, LOOT's masterlist groups,

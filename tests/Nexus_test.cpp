@@ -274,6 +274,46 @@ class NexusTest : public QObject {
         QCOMPARE(files->at(1).size, qint64(47303051));
     }
 
+    void test_archive_names_lead_to_their_files()
+    {
+        // what Nexus Mods lists for two mods (from its GraphQL modFiles, 2026-11-20): older files are named by their uri,
+        // newer ones only have a storage path there
+        const QByteArray beyondReach =
+            "{\"data\":{\"modFiles\":["
+            "{\"fileId\":741776,\"name\":\"Grass - Beyond Reach\",\"version\":\"1\",\"category\":\"ARCHIVED\",\"date\":1776169628,"
+            "\"uri\":\"Grass - Beyond Reach-177338-1-1776169628.rar\"},"
+            "{\"fileId\":741777,\"name\":\"BOS fix - Beyond Reach\",\"version\":\"1\",\"category\":\"MAIN\",\"date\":1776169650,"
+            "\"uri\":\"Beyond Reach - Home Clipping BOS Fix-177338-1-1776169650.rar\"}]}}";
+        const QByteArray tng =
+            "{\"data\":{\"modFiles\":["
+            "{\"fileId\":830948,\"name\":\"TNG Main Thread Fix\",\"version\":\"v4.2.7-mitfix2PL\",\"category\":\"ARCHIVED\","
+            "\"date\":1793613371,\"uri\":\"6a/0e/d9/6a0ed9cd-07eb-4b0c-9609-1cc7624decb8\"},"
+            "{\"fileId\":831494,\"name\":\"TNG Main Thread Fix\",\"version\":\"4\",\"category\":\"MISCELLANEOUS\","
+            "\"date\":1793703548,\"uri\":\"03/23/32/0323326d-f36f-4334-bd8f-17226021cac3\"}]}}";
+        const auto beyondFiles = Nexus::parseGraphqlModFiles(beyondReach);
+        const auto tngFiles = Nexus::parseGraphqlModFiles(tng);
+        QVERIFY(beyondFiles.has_value() && tngFiles.has_value());
+
+        // an older file: every number between dashes may be the mod; its own name tells the file
+        const QString older = "Beyond Reach - Home Clipping BOS Fix-177338-1-1776169650.rar";
+        QCOMPARE(Nexus::modIdsInArchiveName(older), (QList<int>{ 177338, 1 }));
+        QCOMPARE(Nexus::fileForArchive(older, *beyondFiles).value_or(Nexus::ModFile{}).fileId, 741777);
+        QCOMPARE(Nexus::modIdsInArchiveName("HDT-SMP for SSE 1.5.97 v2.11-30872-2-11-1578745910.7z"), (QList<int>{ 30872, 2, 11 }));
+        QCOMPARE(Nexus::modIdsInArchiveName("Seamless Males SE-19164-1-0.7z"), (QList<int>{ 19164, 1 }));
+
+        // a newer file: the number before the version is the mod, the upload time (UTC, to the minute) the file
+        const QString newer = "TNG Main Thread Fix 197140 3PL 2026-11-03T10-59Z pQ0AZWKTW.7z";
+        QCOMPARE(Nexus::modIdsInArchiveName(newer), QList<int>{ 197140 });
+        QCOMPARE(Nexus::fileForArchive(newer, *tngFiles).value_or(Nexus::ModFile{}).fileId, 831494);
+        QCOMPARE(Nexus::modIdsInArchiveName("Address Library All in One (1.7.104.0) v13 32444 13 2026-08-27T15-29Z Ae46W7Fw2.zip"),
+                 QList<int>{ 32444 });
+
+        // nothing that fits: no file
+        QVERIFY(!Nexus::fileForArchive("TNG Main Thread Fix 197140 3PL 2026-11-03T11-00Z pQ0AZWKTW.7z", *tngFiles));
+        QVERIFY(!Nexus::fileForArchive(older, *tngFiles));
+        QVERIFY(Nexus::modIdsInArchiveName("My own patch.7z").isEmpty());
+    }
+
     void test_script_extender_file()
     {
         // the SKSE64 files on Nexus Mods as they were listed (ids, names and descriptions), newest last

@@ -21,6 +21,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QFileInfo>
 #include <QRegularExpression>
 #include <QTimeZone>
 #include <QUrlQuery>
@@ -621,6 +622,46 @@ Result<QList<GameInfo>> parseGames(const QByteArray& json)
         read(value.toObject());
     }
     return games;
+}
+
+namespace {
+
+/// "Name 1234 1.0 2026-01-01T12-30Z code.7z": the mod id and the upload time to the minute (UTC)
+const QRegularExpression k_newArchiveName(QStringLiteral(R"(^.+ (\d+) \S+ (\d{4}-\d{2}-\d{2}T\d{2}-\d{2}Z) \w+\.\w+$)"));
+
+}  // namespace
+
+QList<int> modIdsInArchiveName(const QString& archiveName)
+{
+    if (const auto match = k_newArchiveName.match(archiveName); match.hasMatch()) {
+        return { match.captured(1).toInt() };
+    }
+    QList<int> ids;
+    for (const auto& part : QFileInfo(archiveName).completeBaseName().split('-').mid(1)) {
+        bool number = false;
+        // a ten-digit number at the end is the upload time, not a mod
+        if (const int id = part.toInt(&number); number && id > 0 && part.size() < 10 && !ids.contains(id)) {
+            ids << id;
+        }
+    }
+    return ids;
+}
+
+std::optional<ModFile> fileForArchive(const QString& archiveName, const QList<ModFile>& files)
+{
+    for (const auto& file : files) {
+        if (!file.fileName.isEmpty() && file.fileName.compare(archiveName, Qt::CaseInsensitive) == 0) {
+            return file;
+        }
+    }
+    if (const auto match = k_newArchiveName.match(archiveName); match.hasMatch()) {
+        for (const auto& file : files) {
+            if (file.uploaded.isValid() && file.uploaded.toUTC().toString("yyyy-MM-ddTHH-mmZ") == match.captured(2)) {
+                return file;
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 ModFile bestFile(const QList<ModFile>& files)

@@ -51,6 +51,12 @@ QString ModList::modDir(const QString& id) const
     return FS::PathCombine(m_modsDir, id);
 }
 
+QString ModList::archiveStore(const QString& id) const
+{
+    // a folder whose name starts with a dot is never taken for a mod
+    return FS::PathCombine(m_modsDir, ".archives", id);
+}
+
 Result<> ModList::load()
 {
     beginResetModel();
@@ -90,6 +96,7 @@ Result<> ModList::load()
             entry.nexusFileId = nexus.value("fileId").toInt();
             entry.latestVersion = obj.value("latestVersion").toString();
             entry.archive = obj.value("archive").toString();
+            entry.archivePath = obj.value("archivePath").toString();
             entry.stamp = obj.value("stamp").toInteger();
             for (const auto& choice : obj.value("choices").toArray()) {
                 entry.choices << choice.toVariant().toStringList();
@@ -133,6 +140,9 @@ Result<> ModList::save() const
         }
         if (!entry.archive.isEmpty()) {
             obj.insert("archive", entry.archive);
+        }
+        if (!entry.archivePath.isEmpty()) {
+            obj.insert("archivePath", entry.archivePath);
         }
         if (!entry.choices.isEmpty()) {
             QJsonArray choices;
@@ -292,9 +302,10 @@ Result<> ModList::remove(const QList<int>& rows)
             continue;
         }
         if (!m_mods[row].separator) {
-            const auto dir = modDir(m_mods[row].id);
-            if (!FS::deletePath(dir)) {
-                return std::unexpected(tr("Could not delete %1").arg(dir));
+            for (const auto& dir : { modDir(m_mods[row].id), archiveStore(m_mods[row].id) }) {
+                if (QFileInfo::exists(dir) && !FS::deletePath(dir)) {
+                    return std::unexpected(tr("Could not delete %1").arg(dir));
+                }
             }
         }
         wasEnabled |= m_mods[row].enabled;
@@ -328,6 +339,30 @@ void ModList::setIgnoreUpdates(const QList<int>& rows, bool ignore)
     if (any) {
         changed(false);
     }
+}
+
+void ModList::setArchivePath(const QString& id, const QString& path)
+{
+    if (const int row = indexOf(id); row >= 0 && m_mods[row].archivePath != path) {
+        m_mods[row].archivePath = path;
+        changed(false);
+    }
+}
+
+QString ModList::findArchive(const ModEntry& entry, const QStringList& folders)
+{
+    if (!entry.archivePath.isEmpty() && QFileInfo(entry.archivePath).isFile()) {
+        return entry.archivePath;
+    }
+    if (entry.archive.isEmpty()) {
+        return {};
+    }
+    for (const auto& folder : folders) {
+        if (const auto path = FS::PathCombine(folder, entry.archive); !folder.isEmpty() && QFileInfo(path).isFile()) {
+            return path;
+        }
+    }
+    return {};
 }
 
 int ModList::addSeparator(const QString& name, int row)
