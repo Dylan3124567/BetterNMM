@@ -27,6 +27,10 @@
 
 #include "FileSystem.h"
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace Steam {
 
 namespace {
@@ -263,6 +267,42 @@ QVariantMap parseVdf(const QByteArray& text)
 {
     VdfParser parser(text);
     return parser.parseObject(true);
+}
+
+namespace {
+QString g_clientKey = QStringLiteral("Software\\Valve\\Steam");
+}
+
+QString clientKey()
+{
+    return g_clientKey;
+}
+
+void setClientKey(const QString& key)
+{
+    g_clientKey = key;
+}
+
+ClientState clientState(const QString& key)
+{
+    ClientState state;
+#ifdef Q_OS_WIN
+    const QSettings steam("HKEY_CURRENT_USER\\" + key, QSettings::NativeFormat);
+    state.exe = QDir::fromNativeSeparators(steam.value("SteamExe").toString());
+    const auto pid = steam.value("ActiveProcess/pid").toUInt();
+    // a crashed Steam leaves its last process id behind
+    if (pid != 0) {
+        if (HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+            DWORD code = 0;
+            state.running = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+            CloseHandle(process);
+        }
+    }
+    state.loggedIn = state.running && steam.value("ActiveProcess/ActiveUser").toUInt() != 0;
+#else
+    Q_UNUSED(key)
+#endif
+    return state;
 }
 
 QString steamRoot()

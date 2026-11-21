@@ -210,6 +210,10 @@ isolated instance of the game installation Vortex manages, with:
 6. **Launch** starts the game, the script extender when one is installed, or a tool (Settings > Tools: xEdit, LOOT,
    BodySlide, ...). Tools see the instance's game folder, load order and profile exactly like the game; a tool inside
    the game folder is kept as a path relative to it, so copies and exports of the instance use their own copy.
+   When Steam is closed, launching an isolated instance of a Steam game starts Steam first and waits until you're logged
+   in: a game that finds Steam closed starts it itself, and Steam then has the instance's profile and runs the game again
+   from the Steam installation (with whatever is installed there). A launch also warns when Steam is still running with an
+   instance's profile from such a start; exit Steam and start it again.
    A tool with an *Output mod* (Settings > Tools; a tool you add gets *Name Output*) has the files it writes into the
    game folder moved into that mod once it exits, also when it crashed or was killed: generated meshes, patches and
    plugins become a mod you can disable, reorder or remove. The mod is made at the end of the list the first time and

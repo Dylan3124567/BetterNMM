@@ -49,6 +49,18 @@ QVariantMap parseVdf(const QByteArray& text);
 /// The Steam client folder from the registry, empty when Steam is not installed
 QString steamRoot();
 
+/// What the Steam client says about itself in the registry
+struct ClientState {
+    bool running = false;   ///< its process is alive
+    bool loggedIn = false;  ///< someone is logged in, so games can start
+    QString exe;            ///< steam.exe, to start it
+};
+/// The key clientState reads by default ("Software\Valve\Steam"); setClientKey points it elsewhere, for tests
+QString clientKey();
+void setClientKey(const QString& key);
+/// The client's state from HKEY_CURRENT_USER\@p key
+ClientState clientState(const QString& key = clientKey());
+
 /// Every library folder from libraryfolders.vdf, the client folder first
 QStringList libraryFolders(const QString& root);
 

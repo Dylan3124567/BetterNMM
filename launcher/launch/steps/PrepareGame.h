@@ -18,6 +18,9 @@
 
 #pragma once
 
+#include <QElapsedTimer>
+#include <QTimer>
+
 #include <memory>
 
 #include "launch/LaunchStep.h"
@@ -32,10 +35,22 @@ class PrepareGame : public LaunchStep {
     ~PrepareGame() override;
 
     void executeTask() override;
-    bool canAbort() const override { return false; }
+    /// Only while it waits for Steam: the rest is quick, or a deploy that must not stop halfway
+    bool canAbort() const override { return m_steamWait.isActive(); }
+    bool abort() override;
+
+    /// How long a launch waits for Steam to start and log in; tests shorten it
+    static void setSteamTimeout(int ms);
 
    private:
+    /// An isolated instance's game that finds Steam closed starts it, with the instance's profile, and has it run the game
+    /// from the Steam installation instead; so Steam is started first, as itself, and the launch waits for it
+    void startSteamFirst();
+    void checkSteam();
+    void deploy();
     void afterDeploy();
 
     std::unique_ptr<DeployTask> m_deploy;
+    QTimer m_steamWait;
+    QElapsedTimer m_steamSince;
 };

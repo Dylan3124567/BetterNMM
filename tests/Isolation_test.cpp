@@ -31,7 +31,9 @@
 #include <game/ModList.h>
 #include <LaunchController.h>
 #include <game/PluginList.h>
+#include <game/Steam.h>
 #include <launch/LaunchTask.h>
+#include <launch/steps/PrepareGame.h>
 #include <settings/INISettingsObject.h>
 
 #include <windows.h>
@@ -47,6 +49,31 @@ const QString k_localLowId = "{A520A1A4-1780-4FF6-BD18-167343C5AF16}";
 QSettings registry(const QString& key)
 {
     return QSettings("HKEY_CURRENT_USER\\" + key, QSettings::NativeFormat);
+}
+
+/// Where the tests' Steam reports itself; launches read it instead of the real Steam's key
+const QString k_steamKey = "Software\\BetterNMM-tests-steam";
+
+/// Puts the tests' Steam in a state: running and logged in as this very process, or not running, started by @p exe
+void setSteam(bool running, const QString& exe = {})
+{
+    auto steam = registry(k_steamKey);
+    steam.setValue("SteamExe", exe);
+    steam.setValue("ActiveProcess/pid", running ? static_cast<uint>(GetCurrentProcessId()) : 0u);
+    steam.setValue("ActiveProcess/ActiveUser", running ? 12345u : 0u);
+    steam.sync();
+}
+
+/// Ends the fake Steam a launch started, so it does not linger after the test
+void endSteam()
+{
+    const auto pid = registry(k_steamKey).value("ActiveProcess/pid").toUInt();
+    if (pid != 0 && pid != GetCurrentProcessId()) {
+        if (HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, pid)) {
+            TerminateProcess(process, 0);
+            CloseHandle(process);
+        }
+    }
 }
 
 /// The value as stored, and whether it is REG_EXPAND_SZ (Windows only expands %USERPROFILE% in that type)
@@ -106,6 +133,19 @@ class IsolationTest : public QObject {
     Q_OBJECT
 
    private slots:
+    void initTestCase()
+    {
+        // launches of isolated Steam games find this "Steam" running instead of asking the real one
+        Steam::setClientKey(k_steamKey);
+        setSteam(true);
+    }
+
+    void cleanupTestCase()
+    {
+        endSteam();
+        registry("Software").remove("BetterNMM-tests-steam");
+    }
+
     void test_profile_redirection_supported()
     {
         // this machine keeps Documents and AppData under the user profile, which isolation relies on
@@ -419,6 +459,93 @@ class IsolationTest : public QObject {
         QVERIFY(!QFileInfo::exists(FS::PathCombine(steam, "Data/late.txt")));
         QVERIFY(!QFileInfo::exists(gameReport));
         QVERIFY(QFileInfo(FS::PathCombine(steam, "Data/Writer")).isDir());
+    }
+
+    void test_steam_started_before_an_isolated_game()
+    {
+        QTemporaryDir dir;
+        auto global = globalSettings(dir.path());
+        const auto steam = FS::PathCombine(dir.path(), "steam");
+        QVERIFY(FS::ensureFolderPathExists(steam));
+        QVERIFY(QFile::copy(KNOWN_FOLDERS_EXE, FS::PathCombine(steam, "Game.exe")));
+        writeFile(FS::PathCombine(steam, "Data/Base.esm"), "TES4");
+        const auto root = FS::PathCombine(dir.path(), "instances/steamfirst");
+        auto settings = std::make_unique<INISettingsObject>(FS::PathCombine(root, "instance.cfg"));
+        settings->registerSetting("InstanceType", "Game");
+        GameInstance instance(global.get(), std::move(settings), root);
+        GameDefinition game;
+        game.domain = "testgame";
+        game.name = "Test Game";
+        game.executable = "Game.exe";
+        game.dataPath = "Data";
+        GameInstance::applyDefinition(instance.settings(), game);
+        instance.settings()->set("InstanceKind", "Isolated");
+        instance.settings()->set("SourceGameDir", steam);
+        instance.settings()->set("SteamAppId", 12345);
+        auto sync = instance.createBaseSyncTask();
+        QSignalSpy synced(sync.get(), &Task::finished);
+        sync->start();
+        QVERIFY(synced.wait(30000));
+        QVERIFY2(sync->wasSuccessful(), qPrintable(sync->failReason()));
+
+        const auto report = FS::PathCombine(root, "report.txt");
+        instance.settings()->set("GameArguments", QString("--print \"%1\"").arg(report));
+        const auto launch = [&](QString* log) {
+            auto* task = instance.createLaunchTask(QString());
+            connect(task, &LaunchTask::readyForLaunch, task, &LaunchTask::proceed);
+            QSignalSpy finished(task, &Task::finished);
+            task->start();
+            // a launch that stops at once has finished before there is anything to wait for
+            const bool ended = finished.count() == 1 || finished.wait(60000);
+            *log = task->getLogModel()->toPlainText();
+            return ended && task->wasSuccessful();
+        };
+        auto cleanup = qScopeGuard([] {
+            endSteam();
+            PrepareGame::setSteamTimeout(120000);
+            setSteam(true);
+        });
+
+        // Steam closed: BetterNMM starts it first and waits until it is logged in, then the game runs in the instance
+        setSteam(false, FAKE_STEAM_EXE);
+        QString log;
+        QVERIFY2(launch(&log), qPrintable(log));
+        QVERIFY2(log.contains("Starting Steam first"), qPrintable(log));
+        QVERIFY(log.contains("Steam is running."));
+        QVERIFY(readReport(report).contains("documents"));
+        QVERIFY(Steam::clientState().loggedIn);
+        endSteam();
+
+        // Steam nowhere to be found: the launch stops before the game can start Steam itself
+        QFile::remove(report);
+        setSteam(false, FS::PathCombine(dir.path(), "no-steam.exe"));
+        QVERIFY(!launch(&log));
+        QVERIFY2(log.contains("can not find it"), qPrintable(log));
+        QVERIFY(!QFileInfo::exists(report));
+
+        // Steam that starts but never logs in: the launch gives up after the wait, the game does not run
+        const auto nologin = FS::PathCombine(dir.path(), "steam-nologin.exe");
+        QVERIFY(QFile::copy(FAKE_STEAM_EXE, nologin));
+        setSteam(false, nologin);
+        PrepareGame::setSteamTimeout(3000);
+        QVERIFY(!launch(&log));
+        QVERIFY2(log.contains("did not start and log in"), qPrintable(log));
+        QVERIFY(!QFileInfo::exists(report));
+
+        // Steam left running with this instance's profile (its browser holds the lock file): the launch says so
+        setSteam(true);
+        const auto lock = FS::PathCombine(instance.profileRoot(), "AppData/Local/Steam/htmlcache/lockfile");
+        QVERIFY(FS::ensureFilePathExists(lock));
+        HANDLE held = CreateFileW(reinterpret_cast<const wchar_t*>(QDir::toNativeSeparators(lock).utf16()), GENERIC_READ | GENERIC_WRITE, 0,
+                                  nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        QVERIFY(held != INVALID_HANDLE_VALUE);
+        const bool launched = launch(&log);
+        CloseHandle(held);
+        QVERIFY2(launched, qPrintable(log));
+        QVERIFY2(log.contains("Steam is running with this instance's profile"), qPrintable(log));
+        // once Steam has let go of it, nothing is said
+        QVERIFY(launch(&log));
+        QVERIFY(!log.contains("Steam is running with this instance's profile"));
     }
 
     void test_isolated_instance_launch()

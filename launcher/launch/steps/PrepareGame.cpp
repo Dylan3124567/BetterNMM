@@ -26,9 +26,25 @@
 #include "game/Deployer.h"
 #include "game/GameFiles.h"
 #include "game/PluginList.h"
+#include "game/Steam.h"
 #include "launch/LaunchTask.h"
 
-PrepareGame::PrepareGame(LaunchTask* parent) : LaunchStep(parent) {}
+#include <QProcess>
+
+namespace {
+int g_steamTimeout = 120000;
+}
+
+PrepareGame::PrepareGame(LaunchTask* parent) : LaunchStep(parent)
+{
+    m_steamWait.setInterval(500);
+    connect(&m_steamWait, &QTimer::timeout, this, &PrepareGame::checkSteam);
+}
+
+void PrepareGame::setSteamTimeout(int ms)
+{
+    g_steamTimeout = ms;
+}
 
 PrepareGame::~PrepareGame() = default;
 
@@ -70,13 +86,16 @@ void PrepareGame::executeTask()
                      MessageLevel::Warning);
     }
 
-#ifdef Q_OS_WIN
-    QSettings steam(R"(HKEY_CURRENT_USER\Software\Valve\Steam\ActiveProcess)", QSettings::NativeFormat);
-    if (instance->steamAppId() > 0 && steam.value("pid").toInt() == 0) {
-        emit logLine(tr("Steam does not seem to be running. Steam games need it; start Steam if the game closes right away."),
-                     MessageLevel::Warning);
+    if (!instance->isMain() && instance->steamAppId() > 0) {
+        // Chromium holds this file while Steam's browser runs with this profile: Steam was started by this instance's game
+        if (const auto lock = FS::PathCombine(instance->profileRoot(), "AppData/Local/Steam/htmlcache/lockfile");
+            QFileInfo::exists(lock) && !QFile(lock).open(QIODevice::ReadOnly)) {
+            emit logLine(tr("Steam is running with this instance's profile: a launch while Steam was closed let the game start it. "
+                            "Whatever Steam starts now (any game, Skyrim from Steam too) uses this instance's Documents and "
+                            "AppData. Exit Steam (Steam > Exit) and start it again."),
+                         MessageLevel::Warning);
+        }
     }
-#endif
 
     if (!instance->isMain() && instance->steamAppId() > 0) {
         // makes the Steam API accept a game started outside Steam's own folder
@@ -88,6 +107,70 @@ void PrepareGame::executeTask()
         }
     }
 
+    if (!instance->isMain() && instance->steamAppId() > 0 && !Steam::clientState().loggedIn) {
+        startSteamFirst();
+        return;
+    }
+    deploy();
+}
+
+void PrepareGame::startSteamFirst()
+{
+    const auto state = Steam::clientState();
+    if (!state.running) {
+        if (state.exe.isEmpty() || !QFileInfo::exists(state.exe)) {
+            const auto error = tr("Steam is not running and BetterNMM can not find it to start it. Start Steam, log in, and launch again.");
+            emit logLine(error, MessageLevel::Fatal);
+            emitFailed(error);
+            return;
+        }
+        // BetterNMM's own environment, not the instance's: Steam keeps its settings in the real profile
+        if (!QProcess::startDetached(state.exe, { "-silent" }, QFileInfo(state.exe).absolutePath())) {
+            const auto error = tr("Could not start Steam (%1). Start it, log in, and launch again.").arg(QDir::toNativeSeparators(state.exe));
+            emit logLine(error, MessageLevel::Fatal);
+            emitFailed(error);
+            return;
+        }
+        emit logLine(tr("Starting Steam first: a game that finds Steam closed starts it itself, and Steam then runs the game from "
+                        "the Steam installation instead of this instance."),
+                     MessageLevel::Launcher);
+    } else {
+        emit logLine(tr("Waiting for Steam to log in..."), MessageLevel::Launcher);
+    }
+    m_steamSince.start();
+    m_steamWait.start();
+}
+
+void PrepareGame::checkSteam()
+{
+    if (Steam::clientState().loggedIn) {
+        m_steamWait.stop();
+        emit logLine(tr("Steam is running."), MessageLevel::Launcher);
+        deploy();
+        return;
+    }
+    if (m_steamSince.elapsed() > g_steamTimeout) {
+        m_steamWait.stop();
+        const auto error = tr("Steam did not start and log in within %n second(s). Start Steam, log in, and launch again.", nullptr,
+                              g_steamTimeout / 1000);
+        emit logLine(error, MessageLevel::Fatal);
+        emitFailed(error);
+    }
+}
+
+bool PrepareGame::abort()
+{
+    if (!m_steamWait.isActive()) {
+        return false;
+    }
+    m_steamWait.stop();
+    emitAborted();
+    return true;
+}
+
+void PrepareGame::deploy()
+{
+    auto* instance = m_parent->instance();
     emit logLine(tr("Deploying %n enabled mod(s)...", nullptr, static_cast<int>(instance->modList()->enabledMods().size())),
                  MessageLevel::Launcher);
     m_deploy = instance->createDeployTask();
